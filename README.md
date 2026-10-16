@@ -3,6 +3,12 @@
 Linux 桌面壳（Electron），把**你系统上已经装好的 DSH 的 Web 端**装进一个独立窗口——
 就是你在浏览器里打开 `dsh web` 看到的那个界面，壳子只是给它一个自己的窗口。
 
+> **截图位**：把壳子运行时的截图放到 `docs/screenshot.png`，然后把下面这行取消注释：
+> ```markdown
+> ![dsh-shell-linux 运行截图](docs/screenshot.png)
+> ```
+> 截图方法见「安装与运行」末尾的「给 README 加截图」。
+
 **它不是 DSH 的打包版，也不重新实现 DSH。** 壳子不打包任何 DSH 运行时，而是引用系统已安装的
 `/usr/local/lib/node_modules/@deepseek-ai/dsh`（可用 `DSH_INSTALL_ANCHOR` 改），
 用它自带的 Web 前端资源，并复用你现有的 `~/.dsh/profiles/web` profile（可用 `DSH_DESKTOP_PROFILE` 改）。
@@ -61,8 +67,18 @@ npm run build     # tsc + esbuild 打 preload
 scripts/install-desktop.sh            # 装菜单/桌面入口（换目录后必跑；--remove 卸载）
 scripts/install-desktop.sh --check    # 自检菜单图标与入口是否和 assets 同步
 node scripts/build-icons.mjs          # 从系统 dsh 前端的 favicon.svg 重新生成图标
-node scripts/verify-shell.mjs <exprs.json> --shot out.png   # CDP 真机验证工具
+node scripts/verify-shell.mjs <exprs.json>   # CDP 真机验证工具（断言 + 可选 --shot）
 ```
+
+### 给 README 加截图
+
+`--shot` 依赖 CDP 的 `Page.captureScreenshot`，在 Wayland 下可能拿不到已合成的表面而超时。
+**最可靠的办法是直接按打印屏幕键**：
+
+- GNOME/Wayland：按 `PrtSc` 截全屏，或 `Shift+PrtSc` 选窗口，图片落到 `~/图片/截图/`
+- 截好后另存为 `docs/screenshot.png`，再按文件顶部说明取消注释那行引用
+
+窗口内容是官方 dsh 前端，截屏时注意别把会话内容一起拍进去。
 
 ## 桌面功能
 
@@ -192,4 +208,4 @@ frameless 窗口的标题栏由 `serveWebDocument` 注入 `index.html`（`src/ma
 - **anywhere-labs/dsh-desktop**（MIT）—— `src/host/platform-login.ts` 的账号 watch 语义借鉴自其
   `dsh-desktop-next/src/host/platform-login.ts`。
 
-各文件头部保留了对应的 MIT 出处注释。
+各文件头部保留了对应的 MIT 出处注释。逐条对应关系见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
