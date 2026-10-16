@@ -29,10 +29,10 @@
   "author": "liaiaaa",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/liaiaaa/dsh-shell-linux-.git"
+    "url": "git+https://github.com/liaiaaa/dsh-shell-linux.git"
   },
-  "homepage": "https://github.com/liaiaaa/dsh-shell-linux-#readme",
+  "homepage": "https://github.com/liaiaaa/dsh-shell-linux#readme",
   "bugs": {
-    "url": "https://github.com/liaiaaa/dsh-shell-linux-/issues"
+    "url": "https://github.com/liaiaaa/dsh-shell-linux/issues"
   }
 }
