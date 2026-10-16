@@ -1,0 +1,87 @@
+import { describe, expect, it } from 'vitest'
+import { isNewerVersion, checkForDshUpdate } from '../src/main/updates.ts'
+
+describe('isNewerVersion', () => {
+  it('orders plain releases', () => {
+    expect(isNewerVersion('0.3.0', '0.2.0')).toBe(true)
+    expect(isNewerVersion('1.0.0', '1.0.0')).toBe(false)
+    expect(isNewerVersion('0.1.9', '0.2.0')).toBe(false)
+  })
+  it('a prerelease is older than its final release', () => {
+    expect(isNewerVersion('0.3.0', '0.3.0-rc.2')).toBe(true)
+    expect(isNewerVersion('0.3.0-rc.2', '0.3.0-rc.1')).toBe(true)
+    expect(isNewerVersion('0.3.0-rc.2', '0.3.0')).toBe(false)
+  })
+  it('prerelease identifiers compare numerically and lexically', () => {
+    expect(isNewerVersion('0.3.0-rc.10', '0.3.0-rc.9')).toBe(true)
+    expect(isNewerVersion('0.3.0-beta', '0.3.0-alpha')).toBe(true)
+    expect(isNewerVersion('0.3.0-rc.1', '0.3.0-rc.1')).toBe(false)
+  })
+})
+
+describe('checkForDshUpdate', () => {
+  it('reports no update when registry equals local', async () => {
+    const result = await checkForDshUpdate({
+      localVersion: '0.2.0-rc.2',
+      fetchImpl: async () => new Response(JSON.stringify({ version: '0.2.0-rc.2' }), { status: 200 }),
+    })
+    expect(result).toEqual({ status: 'ok', latestVersion: '0.2.0-rc.2', updateAvailable: false })
+  })
+  it('reports an update when registry is newer (prerelease aware)', async () => {
+    const result = await checkForDshUpdate({
+      localVersion: '0.2.0-rc.2',
+      fetchImpl: async () => new Response(JSON.stringify({ version: '0.3.0' }), { status: 200 }),
+    })
+    expect(result).toEqual({ status: 'ok', latestVersion: '0.3.0', updateAvailable: true })
+  })
+  it('never reports a downgrade as an update', async () => {
+    const result = await checkForDshUpdate({
+      localVersion: '1.0.0',
+      fetchImpl: async () => new Response(JSON.stringify({ version: '0.9.0' }), { status: 200 }),
+    })
+    expect(result).toEqual({ status: 'ok', latestVersion: '0.9.0', updateAvailable: false })
+  })
+  it('maps registry failures to unreachable with the cause code', async () => {
+    const result = await checkForDshUpdate({
+      localVersion: '0.2.0-rc.2',
+      fetchImpl: async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }) },
+    })
+    expect(result).toEqual({ status: 'unreachable', reason: 'ECONNREFUSED' })
+  })
+  it('maps malformed registry answers to an error, not a crash', async () => {
+    const result = await checkForDshUpdate({
+      localVersion: '0.2.0-rc.2',
+      fetchImpl: async () => new Response('not json', { status: 200 }),
+    })
+    expect(result.status).toBe('error')
+    const result2 = await checkForDshUpdate({
+      localVersion: '0.2.0-rc.2',
+      fetchImpl: async () => new Response(JSON.stringify({ version: 42 }), { status: 200 }),
+    })
+    expect(result2.status).toBe('error')
+  })
+})
+
+describe('installedDshVersion', () => {
+  it('reads the version from the install anchor package.json', async () => {
+    const { installedDshVersion } = await import('../src/shared/config.ts')
+    const version = installedDshVersion()
+    expect(version).toMatch(/^\d+\.\d+\.\d+/)
+  })
+  it('honors DSH_INSTALL_ANCHOR and rejects a file without a version', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const root = mkdtempSync(join(tmpdir(), 'dsh-anchor-'))
+    try {
+      const anchor = join(root, 'package.json')
+      writeFileSync(anchor, '{"name":"x"}')
+      process.env.DSH_INSTALL_ANCHOR = anchor
+      const { installedDshVersion } = await import('../src/shared/config.ts')
+      expect(() => installedDshVersion()).toThrow('no version string')
+    } finally {
+      delete process.env.DSH_INSTALL_ANCHOR
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})

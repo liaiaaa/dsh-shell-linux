@@ -1,0 +1,38 @@
+{
+  "name": "dsh-shell-linux",
+  "version": "0.1.0",
+  "description": "Linux desktop shell for DSH: runs your installed DeepSeek Harness web UI (the `dsh web` interface) in its own Electron window",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/node/main/main.js",
+  "keywords": [
+    "dsh",
+    "deepseek",
+    "deepseek-harness",
+    "electron",
+    "desktop",
+    "linux"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/build-preloads.mjs",
+    "test": "vitest run",
+    "start": "npm run build && electron . --no-sandbox",
+    "install-desktop": "scripts/install-desktop.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^44.7.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.7.0",
+    "vitest": "^5.0.3"
+  },
+  "author": "liaiaaa",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liaiaaa/dsh-shell-linux-.git"
+  },
+  "homepage": "https://github.com/liaiaaa/dsh-shell-linux-#readme",
+  "bugs": {
+    "url": "https://github.com/liaiaaa/dsh-shell-linux-/issues"
+  }
+}

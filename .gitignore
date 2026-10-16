@@ -1,0 +1,10 @@
+# Dependencies and build output
+node_modules/
+dist/
+
+# Runtime state (the shell writes its own userData under ~/.config/dsh-shell-linux)
+*.log
+
+# Editor / OS noise
+.DS_Store
+*.swp
