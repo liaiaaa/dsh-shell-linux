@@ -33,8 +33,16 @@ Electron 主进程（壳）
 前置：已安装 DSH（`/usr/local/lib/node_modules/@deepseek-ai/dsh`），Node ≥ 22。
 
 ```sh
+git clone https://github.com/liaiaaa/dsh-shell-linux.git
+cd dsh-shell-linux
 npm install
 npm start
+```
+
+装好之后想让它在应用菜单里出现（推荐）：
+
+```sh
+scripts/install-desktop.sh
 ```
 
 `npm start` = `npm run build && electron . --no-sandbox`。
@@ -158,7 +166,7 @@ xray 的路由把 deepseek 判为 `geoip:cn` 直连，实测到 `platform.deepse
 frameless 窗口的标题栏由 `serveWebDocument` 注入 `index.html`（`src/main/web-document.ts` 的 CAPTION），
 官方前端 dist 是只读的，这是唯一的注入点。行为：
 
-- **高 40px、底色透明**：40px 取自上游 `WINDOWS_TITLEBAR_HEIGHT`（`dsh-shell-linux-next/src/windows-layout.ts`），
+- **高 40px、底色透明**：40px 取自上游 `WINDOWS_TITLEBAR_HEIGHT`（`dsh-desktop-next/src/windows-layout.ts`），
   透明取自上游 `WINDOWS_CAPTION_FILL = '#00000000'`——应用自己的背景透上来，标题栏没有独立视觉层。
 - **空间预留只用 body border-top（40px）**。曾经同时设 `html padding-top`，导致应用布局多出 36px：
   底部状态栏被顶出视口、文档滚动条贯穿标题栏。`tests/web-document.test.ts` 有用例盯着。
@@ -181,7 +189,7 @@ frameless 窗口的标题栏由 `serveWebDocument` 注入 `index.html`（`src/ma
 
 - **deepseek-ai/deepseek-harness** `apps/desktop` 与 `apps/desktop-host`（MIT）——
   `web-document.ts`、`host-process.ts`、preload 结构、WS 头改写配方均适配自该源码。
-- **anywhere-labs/dsh-shell-linux**（MIT）—— `src/host/platform-login.ts` 的账号 watch 语义借鉴自其
-  `dsh-shell-linux-next/src/host/platform-login.ts`。
+- **anywhere-labs/dsh-desktop**（MIT）—— `src/host/platform-login.ts` 的账号 watch 语义借鉴自其
+  `dsh-desktop-next/src/host/platform-login.ts`。
 
 各文件头部保留了对应的 MIT 出处注释。
