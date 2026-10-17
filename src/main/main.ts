@@ -15,7 +15,7 @@ import { cacheUpstream, startTunnel, type Tunnel, type TunnelResult, type Upstre
 import { writeOverlayPatch } from '../host/overlay-patch.ts'
 import { platformLoginUrl } from './platform-login.ts'
 import { clampToWorkArea, isRestorableState, normalizeWindowState, type WindowState } from './window-state.ts'
-import { checkForDshUpdate } from './updates.ts'
+import { checkForDshUpdate, upgradeCommandForTag } from './updates.ts'
 import { createShortcutsService } from './shortcuts.ts'
 import { CrashBackoff } from './crash-policy.ts'
 import { buildApplicationMenuTemplate, buildPopupMenuTemplate, resolvePopupRequest } from './app-menu.ts'
@@ -378,13 +378,15 @@ if (!gotLock) {
             type: 'info',
             title: 'DSH 更新',
             message: `发现新版本 DSH ${result.latestVersion}`,
-            detail: `当前版本 ${installedDshVersion()}。壳子引用系统安装，升级后重启壳子即可生效：\n\nnpm i -g @deepseek-ai/dsh`,
+            detail: `当前版本 ${installedDshVersion()}，正在跟踪 npm 的 ${result.channel} 标签。\n` +
+              `壳子引用系统安装，升级后重启壳子即可生效：\n\n${upgradeCommandForTag(result.channel)}`,
             buttons: ['知道了'],
           })
         } else if (result.status === 'ok') {
           await showDialog({
             type: 'info', title: 'DSH 更新', message: '已是最新版本',
-            detail: `当前版本 ${result.latestVersion}（npm registry 一致）。`, buttons: ['知道了'],
+            detail: `当前版本 ${result.latestVersion}（npm registry ${result.channel} 标签一致）。`,
+            buttons: ['知道了'],
           })
         } else {
           await showDialog({

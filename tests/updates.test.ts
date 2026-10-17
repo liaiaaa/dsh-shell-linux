@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isNewerVersion, checkForDshUpdate } from '../src/main/updates.ts'
+import { isNewerVersion, checkForDshUpdate, distTagForVersion, upgradeCommandForTag } from '../src/main/updates.ts'
 
 describe('isNewerVersion', () => {
   it('orders plain releases', () => {
@@ -25,21 +25,21 @@ describe('checkForDshUpdate', () => {
       localVersion: '0.2.0-rc.2',
       fetchImpl: async () => new Response(JSON.stringify({ version: '0.2.0-rc.2' }), { status: 200 }),
     })
-    expect(result).toEqual({ status: 'ok', latestVersion: '0.2.0-rc.2', updateAvailable: false })
+    expect(result).toEqual({ status: 'ok', latestVersion: '0.2.0-rc.2', updateAvailable: false, channel: 'next' })
   })
   it('reports an update when registry is newer (prerelease aware)', async () => {
     const result = await checkForDshUpdate({
       localVersion: '0.2.0-rc.2',
       fetchImpl: async () => new Response(JSON.stringify({ version: '0.3.0' }), { status: 200 }),
     })
-    expect(result).toEqual({ status: 'ok', latestVersion: '0.3.0', updateAvailable: true })
+    expect(result).toEqual({ status: 'ok', latestVersion: '0.3.0', updateAvailable: true, channel: 'next' })
   })
   it('never reports a downgrade as an update', async () => {
     const result = await checkForDshUpdate({
       localVersion: '1.0.0',
       fetchImpl: async () => new Response(JSON.stringify({ version: '0.9.0' }), { status: 200 }),
     })
-    expect(result).toEqual({ status: 'ok', latestVersion: '0.9.0', updateAvailable: false })
+    expect(result).toEqual({ status: 'ok', latestVersion: '0.9.0', updateAvailable: false, channel: 'latest' })
   })
   it('maps registry failures to unreachable with the cause code', async () => {
     const result = await checkForDshUpdate({
@@ -83,5 +83,48 @@ describe('installedDshVersion', () => {
       delete process.env.DSH_INSTALL_ANCHOR
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('distTagForVersion', () => {
+  it('a prerelease install follows the prerelease tag', () => {
+    // The real case this exists for: on 2026-10-17 npm `latest` still pointed at 0.2.0-rc.2
+    // while `next` had moved on, so an rc install was told "up to date" forever.
+    expect(distTagForVersion('0.2.0-rc.2')).toBe('next')
+    expect(distTagForVersion('1.0.0-beta.1')).toBe('next')
+    expect(distTagForVersion('0.3.0-alpha')).toBe('next')
+  })
+  it('a final release follows latest, the tag it actually came from', () => {
+    expect(distTagForVersion('1.0.0')).toBe('latest')
+    expect(distTagForVersion('0.2.0')).toBe('latest')
+  })
+})
+
+describe('upgradeCommandForTag', () => {
+  it('names the tag, because a bare install lands on latest and would undo the choice', () => {
+    expect(upgradeCommandForTag('next')).toBe('npm i -g @deepseek-ai/dsh@next')
+    expect(upgradeCommandForTag('latest')).toBe('npm i -g @deepseek-ai/dsh@latest')
+  })
+})
+
+describe('the channel the result carries', () => {
+  const ok = (version: string) => async () => new Response(JSON.stringify({ version }), { status: 200 })
+  it('defaults to the tag implied by the installed version', async () => {
+    const rc = await checkForDshUpdate({ localVersion: '0.2.0-rc.2', fetchImpl: ok('0.2.1-rc.1') })
+    expect(rc).toMatchObject({ status: 'ok', channel: 'next', updateAvailable: true })
+    const stable = await checkForDshUpdate({ localVersion: '1.0.0', fetchImpl: ok('1.0.1') })
+    expect(stable).toMatchObject({ status: 'ok', channel: 'latest', updateAvailable: true })
+  })
+  it('queries that channel\'s endpoint, not a hardcoded latest', async () => {
+    let asked = ''
+    await checkForDshUpdate({
+      localVersion: '0.2.0-rc.2',
+      fetchImpl: async (input) => { asked = String(input); return new Response('{}', { status: 200 }) },
+    })
+    expect(asked).toBe('https://registry.npmjs.org/@deepseek-ai%2Fdsh/next')
+  })
+  it('lets a caller pin the channel explicitly', async () => {
+    const pinned = await checkForDshUpdate({ localVersion: '0.2.0-rc.2', channel: 'latest', fetchImpl: ok('0.2.0-rc.2') })
+    expect(pinned).toMatchObject({ status: 'ok', channel: 'latest', updateAvailable: false })
   })
 })

@@ -5,7 +5,32 @@
  * the injectable fetch so the caller can pick the right network stack.
  */
 
-const REGISTRY_LATEST = 'https://registry.npmjs.org/@deepseek-ai%2Fdsh/latest'
+/**
+ * Which dist-tag to query, given the version the user is running.
+ *
+ * Why this is a function and not a constant: upstream's `latest` tag is NOT where new
+ * builds appear. On 2026-10-17 `latest` still pointed at 0.2.0-rc.2 (published 09-29)
+ * while `next` had moved on to 0.2.1-rc.1 and `alpha` to 0.2.1-alpha.5, so a user on a
+ * prerelease would be told "you are up to date" forever while seven releases went past.
+ * A prerelease install therefore follows the prerelease tag; a final release follows
+ * `latest`, which is the tag it actually came from.
+ *
+ * @param localVersion - the installed version, e.g. `0.2.0-rc.2` or `1.0.0`.
+ * @returns `next` for a prerelease, `latest` otherwise.
+ */
+export function distTagForVersion(localVersion: string): 'latest' | 'next' {
+  return localVersion.includes('-') ? 'next' : 'latest'
+}
+
+/** The registry endpoint for one dist-tag. */
+export function registryUrlForTag(tag: 'latest' | 'next'): string {
+  return `https://registry.npmjs.org/@deepseek-ai%2Fdsh/${tag}`
+}
+
+/** The command that installs what {@link distTagForVersion} chose. */
+export function upgradeCommandForTag(tag: 'latest' | 'next'): string {
+  return tag === 'next' ? 'npm i -g @deepseek-ai/dsh@next' : 'npm i -g @deepseek-ai/dsh@latest'
+}
 
 /** Semver comparison good enough for dist-tags: numeric fields, prerelease ordering. */
 export function isNewerVersion(candidate: string, current: string): boolean {
@@ -41,23 +66,26 @@ export function isNewerVersion(candidate: string, current: string): boolean {
 }
 
 export type UpdateCheckResult =
-  | { status: 'ok'; latestVersion: string; updateAvailable: boolean }
+  | { status: 'ok'; latestVersion: string; updateAvailable: boolean; channel: 'latest' | 'next' }
   | { status: 'unreachable'; reason: string }
   | { status: 'error'; reason: string }
 
 export async function checkForDshUpdate(options: {
   localVersion: string
   fetchImpl?: typeof fetch
-  registryUrl?: string
+  channel?: 'latest' | 'next'
 }): Promise<UpdateCheckResult> {
   const fetchImpl = options.fetchImpl ?? fetch
+  // The channel defaults to whatever the installed version implies, so a caller that does not
+  // care gets the right answer and a test can pin it explicitly.
+  const channel = options.channel ?? distTagForVersion(options.localVersion)
   try {
-    const response = await fetchImpl(options.registryUrl ?? REGISTRY_LATEST, { signal: AbortSignal.timeout(15_000) })
+    const response = await fetchImpl(registryUrlForTag(channel), { signal: AbortSignal.timeout(15_000) })
     if (!response.ok) return { status: 'error', reason: `registry answered ${String(response.status)}` }
     const payload: unknown = await response.json()
     const latest = (payload as { version?: unknown } | null)?.version
     if (typeof latest !== 'string') return { status: 'error', reason: 'registry answer has no version string' }
-    return { status: 'ok', latestVersion: latest, updateAvailable: isNewerVersion(latest, options.localVersion) }
+    return { status: 'ok', latestVersion: latest, updateAvailable: isNewerVersion(latest, options.localVersion), channel }
   } catch (error) {
     const code = (error as { cause?: { code?: unknown } }).cause?.code
     if (typeof code === 'string') return { status: 'unreachable', reason: code }
