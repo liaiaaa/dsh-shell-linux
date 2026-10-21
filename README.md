@@ -3,11 +3,9 @@
 Linux 桌面壳（Electron），把**你系统上已经装好的 DSH 的 Web 端**装进一个独立窗口——
 就是你在浏览器里打开 `dsh web` 看到的那个界面，壳子只是给它一个自己的窗口。
 
-> **截图位**：把壳子运行时的截图放到 `docs/screenshot.png`，然后把下面这行取消注释：
-> ```markdown
-> ![dsh-shell-linux 运行截图](docs/screenshot.png)
-> ```
-> 截图方法见「安装与运行」末尾的「给 README 加截图」。
+![dsh-shell-linux 运行截图](docs/screenshot.png)
+
+*实际运行在 Ubuntu 26.04 / GNOME / Wayland：注入式标题栏（文件/帮助菜单 + 圆形窗口按钮）、会话侧栏、输入框。*
 
 **它不是 DSH 的打包版，也不重新实现 DSH。** 壳子不打包任何 DSH 运行时，而是引用**你系统上已安装的那份**
 DSH——自动探测 `~/.local/lib/node_modules/@deepseek-ai/dsh`（普通 `npm i -g` 更新的位置）和
@@ -73,11 +71,13 @@ node scripts/verify-shell.mjs <exprs.json>   # CDP 真机验证工具（断言 +
 
 ### 给 README 加截图
 
+截图已放在 `docs/screenshot.png`（1600px 宽 PNG）。需要重截时：
+
 `--shot` 依赖 CDP 的 `Page.captureScreenshot`，在 Wayland 下可能拿不到已合成的表面而超时。
 **最可靠的办法是直接按打印屏幕键**：
 
 - GNOME/Wayland：按 `PrtSc` 截全屏，或 `Shift+PrtSc` 选窗口，图片落到 `~/图片/截图/`
-- 截好后另存为 `docs/screenshot.png`，再按文件顶部说明取消注释那行引用
+- 截好后覆盖 `docs/screenshot.png`（建议缩到 1600px 宽、保存为 PNG）
 
 窗口内容是官方 dsh 前端，截屏时注意别把会话内容一起拍进去。
 
