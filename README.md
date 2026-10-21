@@ -9,8 +9,9 @@ Linux 桌面壳（Electron），把**你系统上已经装好的 DSH 的 Web 端
 > ```
 > 截图方法见「安装与运行」末尾的「给 README 加截图」。
 
-**它不是 DSH 的打包版，也不重新实现 DSH。** 壳子不打包任何 DSH 运行时，而是引用系统已安装的
-`/usr/local/lib/node_modules/@deepseek-ai/dsh`（可用 `DSH_INSTALL_ANCHOR` 改），
+**它不是 DSH 的打包版，也不重新实现 DSH。** 壳子不打包任何 DSH 运行时，而是引用**你系统上已安装的那份**
+DSH——自动探测 `~/.local/lib/node_modules/@deepseek-ai/dsh`（普通 `npm i -g` 更新的位置）和
+`/usr/local/lib/node_modules/@deepseek-ai/dsh`，先命中哪个用哪个（可用 `DSH_INSTALL_ANCHOR` 指定），
 用它自带的 Web 前端资源，并复用你现有的 `~/.dsh/profiles/web` profile（可用 `DSH_DESKTOP_PROFILE` 改）。
 所以：**系统 `dsh` 一升级，壳子跟着升级**，不需要重新构建壳子。
 
@@ -36,7 +37,7 @@ Electron 主进程（壳）
 
 ## 安装与运行
 
-前置：已安装 DSH（`/usr/local/lib/node_modules/@deepseek-ai/dsh`），Node ≥ 22。
+前置：已安装 DSH（`~/.local/lib/node_modules/@deepseek-ai/dsh` 或 `/usr/local/lib/node_modules/@deepseek-ai/dsh`，自动探测），Node ≥ 22。
 
 ```sh
 git clone https://github.com/liaiaaa/dsh-shell-linux.git
@@ -88,7 +89,7 @@ node scripts/verify-shell.mjs <exprs.json>   # CDP 真机验证工具（断言 +
 - **渲染进程崩溃自愈（未真机验证）**：`render-process-gone` 时自动重载页面，60 秒窗口内最多 2 次，超限走 fatal 错误窗；退避历史不会被重载成功击穿（单测覆盖）。SIGSEGV 探针无法观测该路径——renderer 被 SIGSEGV 后进入 crashpad 挂起态，CDP 完全冻结，真实 crash 行为留待实际使用验证。
 - **快捷键偏好持久化**：设置 → 编辑快捷键 的修改经 `dshDesktop.shortcuts` 桥由主进程持久化到 `~/.config/dsh-shell-linux/keybindings.json`。协调器直接用系统 dsh 自带的 `dsh-client-shortcuts/protocol`（从安装锚点解析，系统升级自动跟随）；该模块缺失时降级为只读默认键位。
 - **代理开关** `DSH_DESKTOP_NO_PROXY=1`：见下方环境变量表。
-- **检查 DSH 更新**：标题栏「文件」菜单里有此项，加速键 **Ctrl+Shift+U** 亦可；比对 npm registry 的 dist-tag latest（识别 prerelease），只提示不安装——壳子引用系统 dsh，升级仍是用户自己的 `npm i -g @deepseek-ai/dsh`。
+- **检查 DSH 更新**：标题栏「文件」菜单里有此项，加速键 **Ctrl+Shift+U** 亦可；**跟随安装来源的 dist-tag**——预发布版（如 `0.2.1-rc.2`）查 `next`，正式版查 `latest`（识别 prerelease 排序），对话框写明「正在跟踪 npm 的哪个标签」并给出**带 tag 的升级命令**（`npm i -g @deepseek-ai/dsh@next`），只提示不安装。壳子引用系统 dsh，升级仍是用户自己的决定。
 - **关于对话框**：标题栏「帮助」菜单里有此项，加速键 **F1** 亦可；显示壳子版本 + 系统 DSH / Electron / Node 版本。（菜单栏仍隐藏，加速键全局生效；标题栏菜单走原生 `Menu.popup`。）
 - **桌面入口自检**：`scripts/install-desktop.sh --check` 比对菜单图标与 `.desktop` 入口是否和 `assets/` 一致（build-icons 重新生成后、系统 dsh 升级换图标后可用它发现过时），不同步时 exit 1 并逐项报告。
 
@@ -97,7 +98,7 @@ node scripts/verify-shell.mjs <exprs.json>   # CDP 真机验证工具（断言 +
 | 变量 | 默认值 | 用途 |
 |---|---|---|
 | `DSH_DESKTOP_PROFILE` | `~/.dsh/profiles/web` | 使用哪个 profile |
-| `DSH_INSTALL_ANCHOR` | `/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json` | DSH 安装锚点（`require.resolve` 基准） |
+| `DSH_INSTALL_ANCHOR` | 未设置（自动探测 `~/.local/…` → `/usr/local/…`） | DSH 安装锚点（`require.resolve` 基准）；pnpm 树或自定义 `--prefix` 时指定 |
 | `DSH_DESKTOP_NODE` | `/usr/bin/node` | 跑 host 子进程的解释器；必须是绝对路径且存在，否则弹错误窗口 |
 | `DSH_DESKTOP_DEVTOOLS` | 未设置 | 设置任意值即打开 DevTools 并打印 host URL（token 已打码） |
 | `DSH_HOST_DEBUG` | 未设置 | host 子进程打印 bundles / patch 行数 / skipped |
