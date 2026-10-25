@@ -12,6 +12,10 @@ export type PopupMenuName = 'file' | 'help'
 export interface MenuActions {
   readonly checkForUpdates: () => void
   readonly showAbout: () => void
+  /** Restart in the other mode: safe mode from a normal launch, normal mode from safe mode. */
+  readonly restartInSafeMode: () => void
+  /** Whether this launch is a safe-mode launch; only changes the label. */
+  readonly safeMode: boolean
 }
 
 const POPUP_MENU_NAMES: readonly PopupMenuName[] = ['file', 'help']
@@ -20,10 +24,15 @@ export function isPopupMenuName(value: unknown): value is PopupMenuName {
   return typeof value === 'string' && (POPUP_MENU_NAMES as readonly string[]).includes(value)
 }
 
+/** The safe-mode menu entry names where it will take you, not the mode you are in. */
+export function safeModeItemLabel(actions: Pick<MenuActions, 'safeMode'>): string {
+  return actions.safeMode ? '退出安全模式并重启' : '以安全模式重新启动'
+}
+
 /**
  * The hidden application menu. The menu bar is never shown (autoHideMenuBar +
  * setMenuBarVisibility(false)); its accelerators are the only reason it stays mounted,
- * so F1 and Ctrl+Shift+U keep working globally.
+ * so F1, Ctrl+Shift+U, and the safe-mode restart keep working globally.
  */
 export function buildApplicationMenuTemplate(actions: MenuActions): MenuItemConstructorOptions[] {
   return [
@@ -39,6 +48,8 @@ export function buildApplicationMenuTemplate(actions: MenuActions): MenuItemCons
       label: '帮助',
       submenu: [
         { label: '检查 DSH 更新…', accelerator: 'Ctrl+Shift+U', click: actions.checkForUpdates },
+        { type: 'separator' },
+        { label: safeModeItemLabel(actions), click: actions.restartInSafeMode },
       ],
     },
   ]
@@ -61,6 +72,8 @@ export function buildPopupMenuTemplate(name: PopupMenuName, actions: MenuActions
   }
   return [
     { label: '关于 dsh-shell-linux', accelerator: 'F1', registerAccelerator: false, click: actions.showAbout },
+    { type: 'separator' },
+    { label: safeModeItemLabel(actions), click: actions.restartInSafeMode },
   ]
 }
 

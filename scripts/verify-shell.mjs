@@ -43,6 +43,15 @@ const debugPort = Number(option('--port', '9333'))
 const appDir = resolve(option('--app', '.'))
 /** The application's custom scheme; matches SCHEME in src/shared/ipc.ts. */
 const APP_SCHEME = 'dsh-app'
+/**
+ * Attach to the page target whose URL starts with this prefix instead of the app page.
+ *
+ * The About window is a `data:text/html,…` target; `--target-url data:text/html` is how the
+ * harness reaches it without synthesizing F1 (only the window manager can do that reliably).
+ */
+const targetUrlPrefix = option('--target-url', undefined)
+/** Write the shell's own stdout/stderr to this file before exiting (diagnostics for failures). */
+const keepLog = option('--keep-log', undefined)
 /** Per-evaluate ceiling: an awaited expression that never settles must not hang the harness. */
 const EVAL_TIMEOUT_MS = Number(option('--eval-timeout', '30000'))
 
@@ -66,6 +75,9 @@ shell.stdout.on('data', (chunk) => { shellOut += chunk })
 shell.stderr.on('data', (chunk) => { shellOut += chunk })
 
 const finish = (code) => {
+  if (keepLog !== undefined) {
+    try { writeFileSync(keepLog, shellOut) } catch { /* diagnostics are best effort */ }
+  }
   try { shell.kill('SIGTERM') } catch { /* already gone */ }
   setTimeout(() => {
     try { shell.kill('SIGKILL') } catch { /* gone */ }
@@ -95,7 +107,9 @@ async function findPageTarget() {
       // expression there never settles.
       const pages = targets.filter(target => target.type === 'page'
         && typeof target.webSocketDebuggerUrl === 'string' && !target.url.startsWith('devtools://'))
-      const page = pages.find(target => target.url.startsWith(`${APP_SCHEME}://`)) ?? pages[0]
+      const page = targetUrlPrefix !== undefined
+        ? pages.find(target => target.url.startsWith(targetUrlPrefix))
+        : (pages.find(target => target.url.startsWith(`${APP_SCHEME}://`)) ?? pages[0])
       if (page !== undefined) return page
     } catch { /* not listening yet */ }
     if (shell.exitCode !== null) throw new Error(`shell exited early with ${String(shell.exitCode)}`)

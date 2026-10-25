@@ -89,8 +89,10 @@ node scripts/verify-shell.mjs <exprs.json>   # CDP 真机验证工具（断言 +
 - **渲染进程崩溃自愈（未真机验证）**：`render-process-gone` 时自动重载页面，60 秒窗口内最多 2 次，超限走 fatal 错误窗；退避历史不会被重载成功击穿（单测覆盖）。SIGSEGV 探针无法观测该路径——renderer 被 SIGSEGV 后进入 crashpad 挂起态，CDP 完全冻结，真实 crash 行为留待实际使用验证。
 - **快捷键偏好持久化**：设置 → 编辑快捷键 的修改经 `dshDesktop.shortcuts` 桥由主进程持久化到 `~/.config/dsh-shell-linux/keybindings.json`。协调器直接用系统 dsh 自带的 `dsh-client-shortcuts/protocol`（从安装锚点解析，系统升级自动跟随）；该模块缺失时降级为只读默认键位。
 - **代理开关** `DSH_DESKTOP_NO_PROXY=1`：见下方环境变量表。
-- **检查 DSH 更新**：标题栏「文件」菜单里有此项，加速键 **Ctrl+Shift+U** 亦可；**跟随安装来源的 dist-tag**——预发布版（如 `0.2.1-rc.2`）查 `next`，正式版查 `latest`（识别 prerelease 排序），对话框写明「正在跟踪 npm 的哪个标签」并给出**带 tag 的升级命令**（`npm i -g @deepseek-ai/dsh@next`），只提示不安装。壳子引用系统 dsh，升级仍是用户自己的决定。
-- **关于对话框**：标题栏「帮助」菜单里有此项，加速键 **F1** 亦可；显示壳子版本 + 系统 DSH / Electron / Node 版本。（菜单栏仍隐藏，加速键全局生效；标题栏菜单走原生 `Menu.popup`。）
+- **关于与更新窗口**：标题栏「帮助」→「关于 dsh-shell-linux」或 **F1**；一个窗口里放壳子版本、系统 DSH / Electron / Node / host 解释器、更新区、GitHub 链接与「复制版本信息」。
+- **检查 DSH 更新**：窗口内「检查更新」或 **Ctrl+Shift+U**；**跟随安装来源的 dist-tag**——预发布版（如 `0.2.1-rc.3`）查 `next`，正式版查 `latest`（识别 prerelease 排序）。
+- **一键升级**：有更新且安装目录可写时直接「立即升级」，窗口实时滚 npm 输出、结束后「重启壳子」；根目录安装（`/usr/local`）不冒用 sudo，按钮改为「复制升级命令」。`DSH_DESKTOP_UPGRADE_DRY_RUN=1` 只打印命令、不执行安装。
+- **安全模式**：帮助菜单「以安全模式重新启动」、启动失败错误窗的「以安全模式启动」、或连续 2 次启动失败后的提示都可进入。实现用官方 `dsh rescue --from-default-profile web` 在 `~/.dsh/profiles/rescue` 种一份干净 profile（无第三方插件、无你的 patch 层），host 子进程用第 4 个 argv 指定 profile 名；退出安全模式是同一个菜单项。只新建 `profiles/rescue`，不动 `profiles/web`。
 - **桌面入口自检**：`scripts/install-desktop.sh --check` 比对菜单图标与 `.desktop` 入口是否和 `assets/` 一致（build-icons 重新生成后、系统 dsh 升级换图标后可用它发现过时），不同步时 exit 1 并逐项报告。
 
 ## 环境变量
@@ -104,15 +106,25 @@ node scripts/verify-shell.mjs <exprs.json>   # CDP 真机验证工具（断言 +
 | `DSH_HOST_DEBUG` | 未设置 | host 子进程打印 bundles / patch 行数 / skipped |
 | `DSH_DESKTOP_NO_PROXY` | 未设置 | 设为 `1` 或 `true`：剥掉全部代理变量（双大小写）再启动 host 与主进程出站请求 |
 | `DSH_DESKTOP_SYSTEM_PROXY` | `auto` | host 出站 HTTPS 走哪条路：`auto` 跟随 GNOME 面板（**仅当**它是 manual + loopback + 端口真在监听）；`0`/`off` 强制直连；`1`/`on` 要求面板代理（没有就直连并打日志）；**也可直接给 URL**，如 `http://127.0.0.1:10808`——它**跳过面板**，代理开着不用面板也能用上。SOCKS 与未监听的端口一律拒绝（回直连）。`DSH_DESKTOP_NO_PROXY=1` 优先级最高 |
+| `DSH_DESKTOP_UPGRADE_DRY_RUN` | 未设置 | 设为 `1`：一键升级只打印将执行的 npm 命令并返回演练结果，不真正安装 |
+| `DSH_DESKTOP_NPM` | `npm`（PATH 查找） | 一键升级时调用的 npm 可执行文件 |
+| `DSH_DESKTOP_SAFE_MODE` | 未设置 | 设为 `1` 等价于命令行 `--safe-mode`：用 `profiles/rescue` 启动（脚本 / 探针用） |
+| `DSH_DESKTOP_ABOUT_AT_START` | 未设置 | 设为 `1`：启动后自动打开「关于与更新」窗口（探针用） |
 
 ## 目录结构
 
 ```
 src/shared/    config.ts（安装锚点推导 + 系统 DSH 版本）、ipc.ts（IPC 通道 + 事件契约 + 运行时校验）
-src/host/      index.ts（子进程入口：runProfile('web') + 账号 watch）
+               about-ipc.ts（关于/更新窗口的 IPC 通道与更新状态类型）
+src/host/      index.ts（子进程入口：runProfile(profile 名，argv[3]) + 账号 watch）
                platform-login.ts（登录 attempt → shell 请求）
-src/main/      main.ts（协议、窗口、IPC、关闭阶梯、菜单）
+               overlay-patch.ts（账号插件超时 overlay）
+src/main/      main.ts（协议、窗口、IPC、关闭阶梯、菜单、关于/更新/安全模式编排）
                host-process.ts（子进程生命周期）
+               about-window.ts / about-document.ts（关于与更新窗口：data: 页 + preload 桥）
+               upgrade.ts（一键升级：可写判定 + npm 执行 + 日志打码 + 演练模式）
+               safe-mode.ts（安全模式：rescue 种子化、失败计数、重启参数）
+               redact.ts（日志 token 打码，host 输出与升级日志共用）
                web-document.ts（静态伺服、token 换 cookie、请求转发、注入式标题栏）
                platform-login.ts（授权页 URL + 主题参数）
                window-state.ts（窗口几何持久化：归一化/工作区夹紧/校验）
@@ -120,10 +132,12 @@ src/main/      main.ts（协议、窗口、IPC、关闭阶梯、菜单）
                updates.ts（npm registry 更新检查 + semver 比较）
                env.ts（host 环境构造：NO_PROXY 剥离）
 src/preload/   app.ts（dshDesktop / dshDesktopBoot / 目录选择器 / @path / shortcuts 桥）
+               ui.ts（关于窗口与错误窗的统一桥：window.dshUI）
                keyboard.ts（键盘桥：closeWindow → 窗口控制 IPC）
-scripts/       launch.sh / install-desktop.sh（启动器与菜单入口）、build-preloads.mjs、build-icons.mjs
+scripts/       launch.sh / install-desktop.sh（启动器与菜单入口）、build-preloads.mjs（app.cjs + ui.cjs）、build-icons.mjs
                host-run.mjs（调试 runner）、verify-shell.mjs / attach-inspect.mjs（CDP 真机验证工具）
-tests/         ipc / platform-login / web-document / keyboard / window-state / env / updates / shortcuts 单测
+tests/         ipc / platform-login / web-document / keyboard / window-state / env / updates / shortcuts /
+               about-document / upgrade / safe-mode / app-menu / host-process 单测
 ```
 
 ## 会话「载入历史」卡顿与出网路由（设计说明）
@@ -171,7 +185,9 @@ xray 的路由把 deepseek 判为 `geoip:cn` 直连，实测到 `platform.deepse
 ## 已知限制
 
 - **快捷键编辑器内的录制链路未实测**：桥的 get/edit/落盘已真机直调验证（见 tests/shortcuts.test.ts），但在编辑器 UI 里点击绑定 chip → 录制新键 → 保存的完整交互未走通自动化（CDP 对该弹层定位不稳），留待实际使用时自然验证。
-- **菜单项点击 → 对话框**（更新检查 / 关于）未端到端实测：主进程菜单不在 CDP 验证 harness 的可达范围；检查逻辑本身已单测 + registry 冒烟。
+- **菜单项点击 → 关于/更新窗口**：窗口本身（版本表、更新检查、preload 桥、安全模式徽标）已用 `DSH_DESKTOP_ABOUT_AT_START=1` + CDP 真机验证并截图；「真实鼠标点菜单 / 按 F1」由窗口管理器派发这一段未自动化（主进程菜单不在 CDP 范围）。
+- **一键升级的真实 npm 安装路径未真跑**：单测覆盖成功/失败/超时/无权限/演练，`DSH_DESKTOP_UPGRADE_DRY_RUN=1` 可演练；真跑会改动系统 dsh，留待需要时由用户触发。
+- **安全模式**：rescue 种子化、argv 传递、界面徽标已在隔离 `DSH_HOME` 真机验证；「连续 2 次启动失败」提示只有单测（`shouldSuggestSafeMode`），真实失败链未复现。窗口标题仍随页面 title 走，模式主要看关于窗徽标与菜单文案。
 - **授权页 theme 跟随、登录失败分支**：需真实重新授权流程才能覆盖。
 - **v1 不打包**：没有 deb / AppImage / 自动更新。这是刻意的——壳子引用系统 dsh，打包会破坏这个前提。
 - **单实例**：两个壳子会跑两个 host 争抢同一个 profile，所以第二个实例直接退出。

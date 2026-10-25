@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { describeHostExit, redactTokens } from '../src/main/host-process.ts'
+import {
+  describeHostExit,
+  hostSpawnArgs,
+  redactTokens,
+} from '../src/main/host-process.ts'
 
 describe('describeHostExit', () => {
   it('a clean stopping shutdown is silent', () => {
@@ -22,6 +26,16 @@ describe('describeHostExit', () => {
   })
 })
 
+describe('hostSpawnArgs', () => {
+  it('passes the host entry, profile directory, and profile name', () => {
+    expect(hostSpawnArgs('/app/dist/node/host/index.js', '/home/li/.dsh/profiles/web', 'web'))
+      .toEqual(['--expose-internals', '/app/dist/node/host/index.js', '/home/li/.dsh/profiles/web', 'web'])
+  })
+  it('carries a non-default profile name for safe mode', () => {
+    expect(hostSpawnArgs('/app/host.js', '/tmp/rescue', 'rescue')[3]).toBe('rescue')
+  })
+})
+
 describe('redactTokens', () => {
   const TOKEN = 'UdKbUZnJ9RE0mTnR8J0MyoErresrGYDzaKiUhUEr_m0'
   it('masks the query token the host prints at boot', () => {
@@ -35,8 +49,8 @@ describe('redactTokens', () => {
       .toBe('https://example.test/path?x=1&token=<redacted>&y=2')
   })
   it('leaves lines without a token untouched', () => {
-    expect(redactTokens('[dsh-desktop] tunnel example.com:443 up 7ms proxy=ok'))
-      .toBe('[dsh-desktop] tunnel example.com:443 up 7ms proxy=ok')
+    expect(redactTokens('[dsh-shell-linux] tunnel example.com:443 up 7ms proxy=ok'))
+      .toBe('[dsh-shell-linux] tunnel example.com:443 up 7ms proxy=ok')
     expect(redactTokens('tokenizer=on, token = abc, mytoken=zzz')).toBe('tokenizer=on, token = abc, mytoken=zzz')
   })
   it('masks every token on one line', () => {

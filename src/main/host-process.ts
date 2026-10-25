@@ -3,7 +3,7 @@
  * Adapted from deepseek-ai/deepseek-harness apps/desktop/src/host-process.ts (MIT).
  *
  * Divergence from the official recipe (recorded as decision D4 in
- * a design decision recorded during development): the official Desktop runs the child under the
+ * the project decisions ledger): the official Desktop runs the child under the
  * Electron binary with `ELECTRON_RUN_AS_NODE=1`. That breaks the user's
  * `@deepseek-ai/dsh-skill-office` plugin, which refuses to start whenever
  * `process.versions.electron` is defined. This shell deliberately carries no DSH
@@ -16,6 +16,7 @@ import { accessSync, constants, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { isHostEvent, type HostEvent } from '../shared/ipc.ts'
 import { installProcessStreamGuards, type StreamGuard } from './console-guard.ts'
+import { redactTokens } from './redact.ts'
 
 const MAX_HOST_DIAGNOSTIC_CHARS = 64 * 1024
 /** Longest partial stdout line kept while waiting for the newline that ends it. */
@@ -59,6 +60,20 @@ export function resolveHostNode(environment: NodeJS.ProcessEnv = process.env): s
   return candidate
 }
 
+/**
+ * The argv the host child is spawned with.
+ *
+ * The profile NAME travels with the directory: the host boots `profiles/<name>` through
+ * `runProfile({ profile })`, and safe mode needs `rescue` instead of the default `web`.
+ *
+ * @param hostEntry - this project's compiled host entry (`dist/node/host/index.js`).
+ * @param profileDir - the profile directory the child loads and uses as its cwd.
+ * @param profileName - the profile name (`web`, `rescue`, or a custom profile's basename).
+ */
+export function hostSpawnArgs(hostEntry: string, profileDir: string, profileName: string): string[] {
+  return ['--expose-internals', hostEntry, profileDir, profileName]
+}
+
 function sleep(milliseconds: number): Promise<false> {
   return new Promise((resolve) => { const timer = setTimeout(() => resolve(false), milliseconds); timer.unref() })
 }
@@ -76,17 +91,9 @@ export function describeHostExit(exit: { code: number | null; signal: NodeJS.Sig
   return `dsh desktop host stopped${suffix}`
 }
 
-/**
- * Mask tokens in a host log line before it reaches the shell's own stdout.
- *
- * The host prints its authenticated URL — `dsh web: http://127.0.0.1:<port>/?token=…` — on boot and
- * the shell forwards everything the child prints to its own stdout, which lands in the systemd user
- * journal. Without this the token sits in `journalctl --user` for as long as that host lives.
- * A forwarded log line is still a log line, so credentials are masked here too.
- */
-export function redactTokens(text: string): string {
-  return text.replace(/([?&]token=)[^\s&"']+/g, '$1<redacted>')
-}
+// The masking helper used by the stdout forwarder lives in `redact.ts` (the upgrade log shares it);
+// re-exported here because this module is where host output is forwarded.
+export { redactTokens } from './redact.ts'
 
 export class HostProcess {
   private child: ChildProcess | undefined
@@ -99,7 +106,7 @@ export class HostProcess {
   /**
    * Guards the shell's own stdout while the child's log lines are forwarded to it.
    *
-   * This forwarding is what crashed the shell once: the host logs constantly, so it is the
+   * This forwarding is what crashed the shell (earlier development): the host logs constantly, so it is the
    * write that hits a detached stdout first. `guardStream` keeps an `error` listener attached (the
    * only thing that prevents the uncaught exception) and stops writing once the reader is gone.
    */
@@ -109,6 +116,7 @@ export class HostProcess {
     private readonly node: string,
     private readonly hostEntry: string,
     private readonly profileDir: string,
+    private readonly profileName: string,
     private readonly environment: NodeJS.ProcessEnv,
     stdout: StreamGuard = installProcessStreamGuards().stdout,
   ) { this.outbound = stdout }
@@ -120,7 +128,7 @@ export class HostProcess {
 
   start(): void {
     if (this.child !== undefined) return
-    const child = spawn(this.node, ['--expose-internals', this.hostEntry, this.profileDir], {
+    const child = spawn(this.node, hostSpawnArgs(this.hostEntry, this.profileDir, this.profileName), {
       cwd: this.profileDir,
       // D4: the interpreter is a standalone Node, so the child environment is passed
       // through as-is — no ELECTRON_RUN_AS_NODE, which would reintroduce

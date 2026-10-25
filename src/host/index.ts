@@ -1,4 +1,4 @@
-/** Boot the user's `web` profile in this Node-mode child and report its URL to the shell. */
+/** Boot the user's profile (default `web`, or `rescue` in safe mode) in this Node-mode child. */
 import { createRequire } from 'node:module'
 import { inspect } from 'node:util'
 import { installAnchor } from '../shared/config.ts'
@@ -23,7 +23,9 @@ const sendSafely = (message: object): Promise<void> => send(message).catch(() =>
 
 async function main(): Promise<void> {
   const profileDir = process.argv[2]
-  if (profileDir === undefined) throw new Error('usage: host <profile-dir>')
+  // Safe mode boots `profiles/rescue` through this same entry; the name travels with the dir.
+  const profileName = process.argv[3] ?? 'web'
+  if (profileDir === undefined) throw new Error('usage: host <profile-dir> [profile-name]')
   const anchor = installAnchor()
   const anchorRequire = createRequire(anchor)
   const bootModule = await import(anchorRequire.resolve('@deepseek-ai/dsh-app-boot'))
@@ -42,6 +44,7 @@ async function main(): Promise<void> {
   const profile = loadProfileDirectory('dsh', profileDir, anchor)
   reportSkippedBundles('dsh', profile)
   if (process.env.DSH_HOST_DEBUG !== undefined) {
+    console.error('[host] profile:', profileName, profileDir)
     console.error('[host] bundles:', profile.layers.map(layer => layer.packageName).join(', '))
     console.error('[host] user patch rows loaded:', profile.patches.length)
     console.error('[host] skipped bundles:', JSON.stringify(profile.skippedBundles))
@@ -56,7 +59,7 @@ async function main(): Promise<void> {
 
   const application = runProfile({
     environment: loadLayeredEnv('dsh'),
-    profile: 'web',
+    profile: profileName,
     resolvedProfile: { profile, installAnchor: anchor },
     patchFiles,
     args: ['--no-open', '--host', '127.0.0.1', '--port', '0'],

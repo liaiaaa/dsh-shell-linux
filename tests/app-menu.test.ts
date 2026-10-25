@@ -4,9 +4,15 @@ import {
   buildPopupMenuTemplate,
   isPopupMenuName,
   resolvePopupRequest,
+  safeModeItemLabel,
 } from '../src/main/app-menu.ts'
 
-const actions = () => ({ checkForUpdates: vi.fn(), showAbout: vi.fn() })
+const actions = (safeMode = false) => ({
+  checkForUpdates: vi.fn(),
+  showAbout: vi.fn(),
+  restartInSafeMode: vi.fn(),
+  safeMode,
+})
 
 /** Flatten one level of `submenu` into a plain array for assertions. */
 function itemsOf(template: readonly Electron.MenuItemConstructorOptions[]): Electron.MenuItemConstructorOptions[] {
@@ -28,13 +34,33 @@ describe('buildApplicationMenuTemplate', () => {
     expect(items.find((item) => item.label === '退出')?.role).toBe('quit')
     expect(items.some((item) => item.type === 'separator')).toBe(true)
   })
+  it('offers the safe-mode restart in the help menu by default', () => {
+    const items = itemsOf(buildApplicationMenuTemplate(actions()))
+    expect(items.map((item) => item.label ?? item.type)).toEqual([
+      '关于 dsh-shell-linux', 'separator', '退出', '检查 DSH 更新…', 'separator', '以安全模式重新启动',
+    ])
+  })
+  it('renames the safe-mode entry when this launch is already safe mode', () => {
+    const items = itemsOf(buildApplicationMenuTemplate(actions(true)))
+    expect(items.some((item) => item.label === '退出安全模式并重启')).toBe(true)
+  })
   it('routes clicks to the injected actions', () => {
     const a = actions()
     const items = itemsOf(buildApplicationMenuTemplate(a))
-    items.find((item) => item.label === '关于 dsh-shell-linux')?.click?.(undefined as never, undefined as never, undefined as never)
-    items.find((item) => item.label === '检查 DSH 更新…')?.click?.(undefined as never, undefined as never, undefined as never)
+    const click = (label: string): void => { items.find((item) => item.label === label)?.click?.(undefined as never, undefined as never, undefined as never) }
+    click('关于 dsh-shell-linux')
+    click('检查 DSH 更新…')
+    click('以安全模式重新启动')
     expect(a.showAbout).toHaveBeenCalledTimes(1)
     expect(a.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(a.restartInSafeMode).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('safeModeItemLabel', () => {
+  it('names the destination mode', () => {
+    expect(safeModeItemLabel({ safeMode: false })).toBe('以安全模式重新启动')
+    expect(safeModeItemLabel({ safeMode: true })).toBe('退出安全模式并重启')
   })
 })
 
@@ -49,19 +75,21 @@ describe('buildPopupMenuTemplate', () => {
     expect(update.registerAccelerator).toBe(false)
     expect(items.find((item) => item.label === '退出')?.role).toBe('quit')
   })
-  it('builds the help menu with the same hint rule', () => {
+  it('builds the help menu with the same hint rule and the safe-mode entry', () => {
     const items = buildPopupMenuTemplate('help', actions())
-    expect(items).toHaveLength(1)
-    expect(items[0].label).toBe('关于 dsh-shell-linux')
+    expect(items.map((item) => item.label ?? item.type)).toEqual(['关于 dsh-shell-linux', 'separator', '以安全模式重新启动'])
     expect(items[0].accelerator).toBe('F1')
     expect(items[0].registerAccelerator).toBe(false)
+    expect(items[2].label).toBe('以安全模式重新启动')
   })
   it('routes clicks to the injected actions', () => {
     const a = actions()
     buildPopupMenuTemplate('file', a)[0].click?.(undefined as never, undefined as never, undefined as never)
     buildPopupMenuTemplate('help', a)[0].click?.(undefined as never, undefined as never, undefined as never)
+    buildPopupMenuTemplate('help', a)[2].click?.(undefined as never, undefined as never, undefined as never)
     expect(a.checkForUpdates).toHaveBeenCalledTimes(1)
     expect(a.showAbout).toHaveBeenCalledTimes(1)
+    expect(a.restartInSafeMode).toHaveBeenCalledTimes(1)
   })
 })
 
