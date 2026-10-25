@@ -18,6 +18,8 @@ import { isHostEvent, type HostEvent } from '../shared/ipc.ts'
 import { installProcessStreamGuards, type StreamGuard } from './console-guard.ts'
 
 const MAX_HOST_DIAGNOSTIC_CHARS = 64 * 1024
+/** Longest partial stdout line kept while waiting for the newline that ends it. */
+const MAX_STDOUT_LINE_CHARS = 8 * 1024
 const SHUTDOWN_ACK_MS = 10_000
 const SIGTERM_GRACE_MS = 5_000
 const SIGKILL_GRACE_MS = 2_000
@@ -74,9 +76,23 @@ export function describeHostExit(exit: { code: number | null; signal: NodeJS.Sig
   return `dsh desktop host stopped${suffix}`
 }
 
+/**
+ * Mask tokens in a host log line before it reaches the shell's own stdout.
+ *
+ * The host prints its authenticated URL — `dsh web: http://127.0.0.1:<port>/?token=…` — on boot and
+ * the shell forwards everything the child prints to its own stdout, which lands in the systemd user
+ * journal. Without this the token sits in `journalctl --user` for as long as that host lives.
+ * A forwarded log line is still a log line, so credentials are masked here too.
+ */
+export function redactTokens(text: string): string {
+  return text.replace(/([?&]token=)[^\s&"']+/g, '$1<redacted>')
+}
+
 export class HostProcess {
   private child: ChildProcess | undefined
   private stderr = ''
+  /** Stdout line not yet terminated by a newline; see forwardStdout(). */
+  private stdoutPending = ''
   private stopping = false
   private readonly listeners = new Set<(event: HostEvent) => void>()
   private readonly exitWaiters = new Set<() => void>()
@@ -117,8 +133,10 @@ export class HostProcess {
     child.stderr?.on('data', (chunk: string) => { this.stderr = (this.stderr + chunk).slice(-MAX_HOST_DIAGNOSTIC_CHARS) })
     // Forwarded through the guard, not written straight to `process.stdout`: once the reader is gone
     // this drops the bytes instead of raising EPIPE, which would otherwise reach Electron as an
-    // uncaught exception and replace the window with an error dialog.
-    child.stdout?.on('data', (chunk: Buffer) => { this.outbound.write(chunk) })
+    // uncaught exception and replace the window with an error dialog. Whole lines are forwarded so a
+    // `?token=…` split across two chunks is still masked (see redactTokens).
+    child.stdout?.setEncoding('utf8')
+    child.stdout?.on('data', (chunk: string) => { this.forwardStdout(chunk) })
     child.on('message', (message: unknown) => {
       if (!isHostEvent(message)) {
         this.fail(new Error('dsh-shell-linux host sent an invalid IPC event'))
@@ -129,6 +147,7 @@ export class HostProcess {
     })
     child.once('error', (error) => { this.fail(error) })
     child.once('close', (code, signal) => {
+      this.flushStdout()
       const message = describeHostExit({ code, signal, stopping: this.stopping, stderrTail: this.stderr.trim() })
       this.fail(message === undefined ? undefined : new Error(message))
     })
@@ -150,6 +169,26 @@ export class HostProcess {
     if (await Promise.race([exited.then(() => true), sleep(SIGTERM_GRACE_MS)])) return
     child0.kill('SIGKILL')
     await Promise.race([exited, sleep(SIGKILL_GRACE_MS)])
+  }
+
+  /** Mask and forward a stdout chunk, holding an unterminated last line until it ends. */
+  private forwardStdout(chunk: string): void {
+    this.stdoutPending += chunk
+    const lines = this.stdoutPending.split('\n')
+    this.stdoutPending = lines.pop() ?? ''
+    if (lines.length > 0) this.outbound.write(lines.map(redactTokens).join('\n') + '\n')
+    // A line that never ends must not grow the buffer without bound: forward it masked as partial.
+    if (this.stdoutPending.length > MAX_STDOUT_LINE_CHARS) {
+      this.outbound.write(redactTokens(this.stdoutPending))
+      this.stdoutPending = ''
+    }
+  }
+
+  /** Forward whatever the child printed without a trailing newline before its stream closes. */
+  private flushStdout(): void {
+    if (this.stdoutPending === '') return
+    this.outbound.write(redactTokens(this.stdoutPending))
+    this.stdoutPending = ''
   }
 
   private fail(error: Error | undefined): void {
