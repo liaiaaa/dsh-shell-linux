@@ -3,7 +3,7 @@
  * Adapted from deepseek-ai/deepseek-harness apps/desktop/src/host-process.ts (MIT).
  *
  * Divergence from the official recipe (recorded as decision D4 in
- * the project decisions ledger): the official Desktop runs the child under the
+ * the project ledger): the official Desktop runs the child under the
  * Electron binary with `ELECTRON_RUN_AS_NODE=1`. That breaks the user's
  * `@deepseek-ai/dsh-skill-office` plugin, which refuses to start whenever
  * `process.versions.electron` is defined. This shell deliberately carries no DSH
@@ -106,7 +106,7 @@ export class HostProcess {
   /**
    * Guards the shell's own stdout while the child's log lines are forwarded to it.
    *
-   * This forwarding is what crashed the shell (earlier development): the host logs constantly, so it is the
+   * This forwarding is what crashed the shell (an earlier round): the host logs constantly, so it is the
    * write that hits a detached stdout first. `guardStream` keeps an `error` listener attached (the
    * only thing that prevents the uncaught exception) and stops writing once the reader is gone.
    */

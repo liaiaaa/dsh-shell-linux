@@ -3,8 +3,8 @@ import { createServer, type Server } from 'node:http'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { gzipSync } from 'node:zlib'
-import { authenticateWebHost, forwardLogEnabled, forwardLogLine, forwardWebRequest, serveWebDocument } from '../src/main/web-document.ts'
+import { gzipSync, gunzipSync } from 'node:zlib'
+import { authenticateWebHost, forwardLogEnabled, forwardLogLine, forwardWebRequest, resetPluginCacheForTests, serveWebDocument } from '../src/main/web-document.ts'
 
 const servers: Server[] = []
 afterEach(() => { for (const server of servers.splice(0)) server.close() })
@@ -152,6 +152,21 @@ describe('serveWebDocument', () => {
       expect(body).toContain('getComputedStyle(document.body).backgroundColor')
       expect(body).toContain('0.2126')
       expect(body).toContain('MutationObserver')
+      // 2026-11-10 concurrency measurement (an internal probe note):
+      // an unfiltered head observer turned every DOM-churn insertion into a forced
+      // document-wide style recompute — 60Hz head <style> churn: fps 89.2→62.9, renderer
+      // +12.9pp CPU, RecalcStyle 715→968/8s; disconnecting the observers restored fps fully.
+      // The callback therefore (a) coalesces to at most one sync per animation frame and
+      // (b) fires only for theme-bearing changes: html/body theme attributes and STYLE/LINK
+      // nodes appearing in head. Scripts and meta tags must not cost a recompute.
+      expect(body).toContain('requestAnimationFrame')
+      expect(body).toContain('if (pending) return')
+      expect(body).toContain("'STYLE'")
+      expect(body).toContain("'LINK'")
+      expect(body).not.toContain('new MutationObserver(sync)')
+      // rAF pauses while the window is hidden; re-apply on show so an offscreen theme
+      // change cannot be lost by a coalesced frame that never arrives.
+      expect(body).toContain("addEventListener('visibilitychange'")
       // Hover is JS-driven on purpose: the strip is a -webkit-app-region drag area, and
       // dragging swallows CSS :hover on the buttons underneath it (user-verified).
       expect(body).toContain('--dsh-caption-hover')
@@ -167,13 +182,13 @@ describe('serveWebDocument', () => {
 })
 
 describe('forwardWebRequest', () => {
-  it('injects the cookie, strips origin/sec-fetch-site, withholds connection-level response headers, streams the body', async () => {
+  afterEach(() => { resetPluginCacheForTests() })
+  it('injects the cookie, strips origin/sec-fetch-site, and delivers a DECODED body', async () => {
     let seen: Record<string, string | undefined> = {}
     const server = createServer((req, res) => {
-      seen = { origin: req.headers.origin, secFetchSite: req.headers['sec-fetch-site'], cookie: req.headers.cookie }
+      seen = { origin: req.headers.origin, secFetchSite: req.headers['sec-fetch-site'], cookie: req.headers.cookie, acceptEncoding: req.headers['accept-encoding'] }
       res.writeHead(200, { 'content-type': 'text/plain', 'set-cookie': 'host-secret=1', 'content-encoding': 'gzip' })
-      // NOTE: the header must be truthful — Node's fetch decodes `content-encoding: gzip`
-      // itself and throws on a plaintext body. Two gzip members keep the chunks separate.
+      // Two gzip members keep the chunks separate.
       res.write(gzipSync(Buffer.from('chunk-one-')))
       setTimeout(() => { res.end(gzipSync(Buffer.from('chunk-two'))) }, 20)
     })
@@ -186,22 +201,78 @@ describe('forwardWebRequest', () => {
     expect(seen.cookie).toBe('dsh-auth-abc=secretvalue')
     expect(seen.origin).toBeUndefined()
     expect(seen.secFetchSite).toBeUndefined()
+    // Blink does NOT decode content-encoding on intercepted protocol.handle responses
+    // (2026-11-10 probe: raw gzip bytes stopped the app at "Loading plugins…"), so the body
+    // must reach the renderer decoded and the encoding headers must not lie about it.
     expect(response.headers.get('set-cookie')).toBeNull()
     expect(response.headers.get('content-encoding')).toBeNull()
     expect(await response.text()).toBe('chunk-one-chunk-two')
   })
-  it('rejects foreign origins and marks plugin bundles no-store', async () => {
-    const server = createServer((req, res) => { res.writeHead(200, { 'cache-control': 'immutable' }).end('bundle') })
+  it('caches content-addressed plugin bundles: the second load never touches the host', async () => {
+    let hits = 0
+    const server = createServer((req, res) => {
+      hits += 1
+      res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'public, max-age=31536000, immutable' })
+      res.end('console.log("bundle")')
+    })
+    servers.push(server)
+    const port = await listen(server)
+    const url = `dsh-app://app/plugins/??a/b.js&rev=deadbeef`
+    const first = await forwardWebRequest(new Request(url), `http://127.0.0.1:${String(port)}`, 'c=1')
+    expect(await first.text()).toBe('console.log("bundle")')
+    expect(hits).toBe(1)
+    const second = await forwardWebRequest(new Request(url), `http://127.0.0.1:${String(port)}`, 'c=1')
+    expect(await second.text()).toBe('console.log("bundle")')
+    expect(second.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
+    expect(hits).toBe(1)
+    // A rebuild changes the rev in the URL: a different key must re-fetch, never serve stale.
+    await forwardWebRequest(new Request(`dsh-app://app/plugins/??a/b.js&rev=cafe0000`), `http://127.0.0.1:${String(port)}`, 'c=1')
+    expect(hits).toBe(2)
+  })
+  it('does not cache POSTs or non-plugin paths', async () => {
+    let hits = 0
+    const server = createServer((req, res) => { hits += 1; res.writeHead(200).end('n' + String(hits)) })
+    servers.push(server)
+    const port = await listen(server)
+    const base = `http://127.0.0.1:${String(port)}`
+    expect(await (await forwardWebRequest(new Request('dsh-app://app/api/x', { method: 'POST', body: 'q' }), base, 'c=1')).text()).toBe('n1')
+    expect(await (await forwardWebRequest(new Request('dsh-app://app/api/x', { method: 'POST', body: 'q' }), base, 'c=1')).text()).toBe('n2')
+    expect(await (await forwardWebRequest(new Request('dsh-app://app/assets/f.js'), base, 'c=1')).text()).toBe('n3')
+    expect(await (await forwardWebRequest(new Request('dsh-app://app/assets/f.js'), base, 'c=1')).text()).toBe('n4')
+  })
+  it('pipes the request body upstream unchanged (unary RPC round trip)', async () => {
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = []
+      req.on('data', (c: Buffer) => chunks.push(c))
+      req.on('end', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ got: Buffer.concat(chunks).toString() })) })
+    })
+    servers.push(server)
+    const port = await listen(server)
+    const response = await forwardWebRequest(
+      new Request('dsh-app://app/api/session/list', { method: 'POST', headers: { origin: 'dsh-app://app' }, body: '{"type":"client-request"}' }),
+      `http://127.0.0.1:${String(port)}`, 'c=1')
+    expect((await response.json() as { got: string }).got).toBe('{"type":"client-request"}')
+  })
+  it('withholds hop-by-hop headers and keeps the host cache policy', async () => {
+    const server = createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain', 'cache-control': 'public, max-age=31536000, immutable' })
+      res.end('bundle')
+    })
+    servers.push(server)
+    const port = await listen(server)
+    const response = await forwardWebRequest(new Request('dsh-app://app/plugins/x/boot.js'), `http://127.0.0.1:${String(port)}`, 'c=1')
+    expect(response.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
+    expect(response.headers.get('content-encoding')).toBeNull()
+    expect(response.headers.get('transfer-encoding')).toBeNull()
+  })
+  it('rejects foreign origins', async () => {
+    const server = createServer((req, res) => { res.writeHead(200).end('x') })
     servers.push(server)
     const port = await listen(server)
     const foreign = await forwardWebRequest(
       new Request('dsh-app://app/api/x', { headers: { origin: 'https://evil.example' } }),
       `http://127.0.0.1:${String(port)}`, 'c=1')
     expect(foreign.status).toBe(403)
-    // NOTE: `http://dsh-app/app/...` parses as pathname `/app/plugins/...`, which the
-    // `/^\/plugins\//` guard never matches; the real shell passes `dsh-app://app/...`.
-    const bundle = await forwardWebRequest(new Request('dsh-app://app/plugins/x/boot.js'), `http://127.0.0.1:${String(port)}`, 'c=1')
-    expect(bundle.headers.get('cache-control')).toBe('no-store')
   })
 })
 

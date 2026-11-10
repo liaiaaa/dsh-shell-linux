@@ -115,7 +115,7 @@ describe('the channel the result carries', () => {
     const stable = await checkForDshUpdate({ localVersion: '1.0.0', fetchImpl: ok('1.0.1') })
     expect(stable).toMatchObject({ status: 'ok', channel: 'latest', updateAvailable: true })
   })
-  it('queries that channel\'s endpoint, not a hardcoded latest', async () => {
+  it("queries that channel's endpoint, not a hardcoded latest", async () => {
     let asked = ''
     await checkForDshUpdate({
       localVersion: '0.2.0-rc.2',

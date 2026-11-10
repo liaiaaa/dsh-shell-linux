@@ -1,20 +1,20 @@
 /**
  * The shell's own loopback CONNECT tunnel: the host's outbound path is chosen PER CONNECTION.
  *
- * Why a tunnel, and not one decision at launch:
+ * Why a tunnel, and not one decision at launch (an earlier round; this corrects an earlier round):
  *  - the route cannot be revised after launch. `dsh-http-proxy` resolves the proxy policy from the
  *    child's environment at process start and keeps it process-wide, and a running child's
  *    environment is not ours to change. A decision made at that instant commits the WHOLE session.
  *  - the boot failure is per-connection, not per-session. The user's own window logged, in one
  *    batch: three raw requests answered 200 at 07:26:50, four raw requests died `read ECONNRESET`
- *    and the proxy only came up eleven seconds later. One probe cannot see that, so an earlier
+ *    at 07:27:02, and xray only came up at 07:26:59. One probe cannot see that, so an earlier round's single
  *    `rawPathHealthy()` was both a false positive and a session-long commitment.
  *  - blocking the window until a path appears is also wrong: this user runs the proxy only
  *    sometimes, so the proxy may never come, and a blank screen is not better than a slow one.
  *
  * So the host always gets `https_proxy = http://127.0.0.1:<this listener>`. That listener is ALWAYS
- * listening because it is us, which removes by construction the failure mode where a dead proxy
- * named in the environment kills every account call. This file then answers, for each connection and with a
+ * listening because it is us, which removes decision D13 by construction (a dead proxy named in the
+ * environment kills every account call). This file then answers, for each connection and with a
  * fresh look at the machine: proxy now? else direct? and, because the measured failure is a reset
  * AFTER the handshake, does that path actually finish a round trip? If nothing works within
  * CONNECT_BUDGET_MS it replies `502` instead of holding the socket, so the account plugin's own 3s
@@ -31,7 +31,7 @@ import { type SystemProxy } from './system-proxy.ts'
  * One client CONNECT gets this long across ALL attempts before the tunnel answers 502 (ms).
  *
  * It must stay UNDER the account plugin's 3s cap (src/host/overlay-patch.ts), and the reason is a
- * measurement, not a preference: with an earlier broken build, the child gave up at ~3.5s with
+ * measurement, not a preference: when an earlier round's tunnel was broken, the child gave up at ~3.5s with
  * `aborted: true`. A budget above the cap means the plugin hangs up first and the tunnel's remaining
  * attempts are spent on a request nobody is waiting for - the retries would be decoration. So the
  * plan below is fitted inside this number and the whole thing answers before the client quits.
@@ -46,7 +46,7 @@ export const CONNECT_PROXY_ATTEMPT_MS = 1_200
  *
  * Sized so the WHOLE plan fits with room to spare: 1200 + 2 x 600 = 2400 of the 2500 budget. Filling
  * the budget exactly would mean the last attempt is planned but never paid for - the loop reports
- * `budget spent` instead of trying - which is how a launch-time budget check once landed after its probes. */
+ * `budget spent` instead of trying - which is how an earlier round's budget check landed after its probes. */
 export const CONNECT_DIRECT_ATTEMPT_MS = 600
 
 /** How many times a failing direct path is retried for one client connection. */
@@ -110,7 +110,7 @@ export type Dial = (host: string, port: number, timeoutMs: number) => Promise<So
  * The real dialer: a socket that connected, never one that merely started trying.
  *
  * Handlers are removed by reference rather than with `removeAllListeners`, which is what segfaulted
- * an earlier version once a TLS client had taken over the same socket.
+ * the first version of an earlier round once a TLS client had taken over the same socket.
  */
 export const dialSocket: Dial = (host, port, timeoutMs) => new Promise((resolve, reject) => {
   let socket: Socket
@@ -268,7 +268,7 @@ function proveTlsRoundTrip(host: string, plain: Socket, timeoutMs: number): Prom
  * AFTER the TLS handshake, so a path that "connected" was precisely the path that then died. Requiring
  * one status line covers DNS, TCP, TLS and the request the client is about to make.
  *
- * Why this is NOT a single launch-time probe: that would ask ONCE and freeze the whole session to the
+ * Why this is NOT an earlier round's `rawPathHealthy()`: that asked ONCE and froze the whole session to the
  * answer, and on a per-connection-random path one success is a false positive (in the user's window
  * three raw requests answered 200 while four died in the same batch). Here the same measurement is
  * made per connection, and a failure costs a retry rather than the session.

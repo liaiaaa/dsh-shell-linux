@@ -8,12 +8,11 @@
 /**
  * Which dist-tag to query, given the version the user is running.
  *
- * Why this is a function and not a constant: upstream's `latest` tag is NOT where new
- * builds appear. On 2026-10-17 `latest` still pointed at 0.2.0-rc.2 (published 09-29)
- * while `next` had moved on to 0.2.1-rc.1 and `alpha` to 0.2.1-alpha.5, so a user on a
- * prerelease would be told "you are up to date" forever while seven releases went past.
- * A prerelease install therefore follows the prerelease tag; a final release follows
- * `latest`, which is the tag it actually came from.
+ * Why this is a function and not a constant: upstream's `latest` tag is NOT where new builds
+ * appear. On 2026-10-17 `latest` still pointed at 0.2.0-rc.2 (published 09-29) while `next` had
+ * moved on to 0.2.1-rc.1 and `alpha` to 0.2.1-alpha.5, so a user on a prerelease would be told
+ * "you are up to date" forever while seven releases went past. A prerelease install therefore
+ * follows the prerelease tag; a final release follows `latest`, which is the tag it came from.
  *
  * @param localVersion - the installed version, e.g. `0.2.0-rc.2` or `1.0.0`.
  * @returns `next` for a prerelease, `latest` otherwise.

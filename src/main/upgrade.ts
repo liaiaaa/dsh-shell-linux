@@ -15,7 +15,7 @@ import { installAnchor, installedDshVersion } from '../shared/config.ts'
 import { redactTokens } from './redact.ts'
 import { upgradeCommandForTag } from './updates.ts'
 
-/** Set to `1` to report the command without running npm (probe/验收用). */
+/** Set to `1` to report the command without running npm (dry-run verification). */
 export const UPGRADE_DRY_RUN_ENV = 'DSH_DESKTOP_UPGRADE_DRY_RUN'
 /** Override the npm executable (PATH lookup by default). */
 export const NPM_OVERRIDE_ENV = 'DSH_DESKTOP_NPM'

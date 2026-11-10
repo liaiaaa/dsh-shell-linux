@@ -92,7 +92,7 @@ const CAPTION = `
   document.head.append(marker);
   var restoreBar = document.getElementById('dsh-caption-restore-bar');
   var maximized = w ? w.isMaximized() : false;
-  if (w && w.onMaximizedChanged) w.onMaximizedChanged(function (state) { maximized = state; sync(); });
+  if (w && w.onMaximizedChanged) w.onMaximizedChanged(function (state) { maximized = state; request(); });
   function sync() {
     // The strip itself stays TRANSPARENT (upstream WINDOWS_CAPTION_FILL is '#00000000'):
     // the app's own background shows through, so the caption has no visual layer of its own.
@@ -146,9 +146,42 @@ const CAPTION = `
       });
     })(hoverTargets[i]);
   }
-  new MutationObserver(sync).observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-ds-theme-source'] });
-  new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
-  new MutationObserver(sync).observe(document.head, { childList: true, subtree: true });
+  // Theme recompute, measured and bounded (an internal probe note,
+  // 2026-11-10): three unfiltered observers calling sync() directly turned EVERY DOM-churn
+  // insertion — lazy <script> chunks, HMR markers, session metadata — into a forced
+  // document-wide getComputedStyle. At 60 head mutations/second that measured
+  // fps 89.2→62.9 and +12.9pp renderer CPU; with the observers disconnected the same churn
+  // cost nothing (recalc 715 vs 717 baseline). So now: at most one sync per animation frame,
+  // and mutations that cannot move the theme (anything in head that is not STYLE/LINK) are
+  // ignored outright.
+  var pending = false;
+  function request() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(function () { pending = false; sync(); });
+  }
+  function themeMoved(records) {
+    for (var i = 0; i < records.length; i++) {
+      var record = records[i];
+      if (record.type === 'attributes') return true;
+      var lists = [record.addedNodes, record.removedNodes];
+      for (var j = 0; j < 2; j++) {
+        var list = lists[j];
+        for (var k = 0; k < list.length; k++) {
+          var node = list[k];
+          if (node.nodeType === 1 && (node.nodeName === 'STYLE' || node.nodeName === 'LINK')) return true;
+        }
+      }
+    }
+    return false;
+  }
+  var themeObserver = new MutationObserver(function (records) { if (themeMoved(records)) request(); });
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-ds-theme-source'] });
+  themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
+  themeObserver.observe(document.head, { childList: true, subtree: true });
+  // rAF pauses while the window is hidden; re-apply on show so a theme change made
+  // offscreen cannot be lost by a frame that never arrived.
+  document.addEventListener('visibilitychange', request);
   sync();
 })();
 </script>`
@@ -213,7 +246,45 @@ const WITHHELD_RESPONSE_HEADERS = [
   'transfer-encoding', 'connection', 'keep-alive', 'te', 'trailer', 'upgrade', 'proxy-authenticate', 'proxy-authorization',
 ]
 
-const PLUGIN_BUNDLE_PATH = /^\/plugins\//u
+/** Content-addressed, immutable client bundles: the body cache below keys on the full URL. */
+export const PLUGIN_BUNDLE_PATH = /^\/plugins\//u
+
+type CachedBundle = { bytes: number, body: Uint8Array, headers: [string, string][] }
+const PLUGIN_CACHE_MAX_BYTES = 64 * 1024 * 1024
+// Map order is insertion order: the first entry is the least recently used, and every hit
+// re-inserts its key so hot bundles survive eviction.
+const pluginCache = new Map<string, CachedBundle>()
+let pluginCacheBytes = 0
+
+function pluginCacheGet(key: string): CachedBundle | undefined {
+  const hit = pluginCache.get(key)
+  if (hit === undefined) return undefined
+  pluginCache.delete(key)
+  pluginCache.set(key, hit)
+  return hit
+}
+
+function pluginCachePut(key: string, entry: CachedBundle): void {
+  if (entry.bytes > PLUGIN_CACHE_MAX_BYTES) return
+  const previous = pluginCache.get(key)
+  if (previous !== undefined) {
+    pluginCacheBytes -= previous.bytes
+    pluginCache.delete(key)
+  }
+  pluginCache.set(key, entry)
+  pluginCacheBytes += entry.bytes
+  while (pluginCacheBytes > PLUGIN_CACHE_MAX_BYTES && pluginCache.size > 1) {
+    const oldest = pluginCache.entries().next().value as [string, CachedBundle]
+    pluginCacheBytes -= oldest[1].bytes
+    pluginCache.delete(oldest[0])
+  }
+}
+
+/** Test seam only: the cache lives per-process and must not leak across vitest cases. */
+export function resetPluginCacheForTests(): void {
+  pluginCache.clear()
+  pluginCacheBytes = 0
+}
 
 /**
  * Forwarding diagnostics. Set `DSH_DESKTOP_FORWARD_LOG=1` and every forwarded request logs two
@@ -247,12 +318,23 @@ export async function forwardWebRequest(request: Request, host: string, cookie: 
   const source = new URL(request.url)
   const origin = request.headers.get('origin')
   if (origin !== null && origin !== 'dsh-app://app') return new Response(null, { status: 403 })
+  // Blink does NOT decode `content-encoding` on intercepted protocol.handle responses
+  // (2026-11-10 probe: forwarding the host's gzip bytes raw stopped the app at
+  // "Loading plugins…" — the script engine received 1f8b garbage). The body therefore has
+  // to reach the renderer decoded, which is exactly what undici fetch hands us; the
+  // encoding headers must be dropped because they would then lie about the bytes.
   const target = new URL(host)
   target.pathname = source.pathname
   target.search = source.search
   const headers = new Headers(request.headers)
   for (const name of ['host', 'origin', 'cookie', 'sec-fetch-site']) headers.delete(name)
   headers.set('cookie', cookie)
+  const plugin = request.method === 'GET' && PLUGIN_BUNDLE_PATH.test(source.pathname)
+  const cached = plugin ? pluginCacheGet(request.url) : undefined
+  if (cached !== undefined) {
+    if (forwardLogEnabled()) console.error(forwardLogLine({ method: request.method, pathname: source.pathname, search: source.search, phase: 'body', ms: 0, status: 200, bytes: cached.bytes }) + ' cached')
+    return new Response(cached.body.slice(), { status: 200, headers: new Headers(cached.headers) })
+  }
   const init = { method: request.method, headers, body: request.body, signal: request.signal, duplex: 'half', redirect: 'manual' as const }
   // Headers are always timed (a clock costs nothing) but the body is only streamed through a
   // counter when the switch is on: every measured wait landed in the headers, so wrapping the
@@ -265,7 +347,29 @@ export async function forwardWebRequest(request: Request, host: string, cookie: 
   if (log || headerMs > SLOW_FORWARD_MS) console.error(forwardLogLine({ ...fields, phase: 'headers', ms: headerMs, status: response.status }))
   const outgoing = new Headers(response.headers)
   for (const name of WITHHELD_RESPONSE_HEADERS) outgoing.delete(name)
-  if (PLUGIN_BUNDLE_PATH.test(source.pathname)) outgoing.set('cache-control', 'no-store')
+  // 2026-11-08: /plugins/ bundles are no longer forced to `no-store`. The host serves them as
+  // `cache-control: public, max-age=31536000, immutable` with content-addressed URLs
+  // (`?rev=<sha>` — a rebuild changes the URL), so a disk cache can never serve stale code.
+  // Forcing no-store made every load re-download 13.55MB through the forward path and removed
+  // the refresh-circuit-breaker during host stalls (an earlier round measured one /plugins request
+  // stuck for 59s; a cached refresh would not have asked the host at all). The old override
+  // was plan text copied verbatim in 2026-11-08 — never a recorded decision (see D1b, which
+  // only fixed the test literal). If a future upstream needs freshness here, restore the
+  // override in this same spot.
+  if (plugin && response.status === 200 && response.body !== null) {
+    // 2026-11-10: the renderer re-requests every bundle on each full load and does not keep
+    // an HTTP cache for intercepted responses, so the host round trip + gzip decode of the
+    // 7.3MB bundle ran on EVERY load (hot page moved 7,371,231 B where Chrome's cache moved
+    // 23,951 B). The rev-keyed body cache in the MAIN process removes the host and undici
+    // from that repeat; the bytes must still stream to the renderer — that leg cannot be
+    // skipped because Blink insists on the decoded form (see the note above).
+    const body = new Uint8Array(await response.arrayBuffer())
+    const headerList: [string, string][] = []
+    outgoing.forEach((value, name) => { headerList.push([name, value]) })
+    pluginCachePut(request.url, { bytes: body.byteLength, body, headers: headerList })
+    if (log) console.error(forwardLogLine({ ...fields, phase: 'body', ms: performance.now() - started, bytes: body.byteLength }))
+    return new Response(body.slice(), { status: response.status, headers: outgoing })
+  }
   if (!log || response.body === null) return new Response(response.body, { status: response.status, headers: outgoing })
   // A slow body is a different failure from a slow header: the host is generating or stalling
   // mid-stream, and the UI waits for the parsed payload, not for the 200.

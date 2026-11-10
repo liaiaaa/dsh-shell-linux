@@ -1,19 +1,19 @@
 /**
  * Find a proxy on this machine that can ACTUALLY tunnel, and say so in a form the host can use.
  *
- * What this module no longer does: decide the route. The shell's own CONNECT tunnel
+ * What this module no longer does: decide the route. Since an earlier round the shell's own CONNECT tunnel
  * (`src/main/tunnel.ts`) asks this question per connection, because a decision made at launch froze
  * the whole session to one sample of a path that fails per connection. What remains here is the
  * discovery half, which the tunnel calls: the panel's proxy first, then discovered loopback
  * listeners, each verified by a real CONNECT plus a TLS handshake through it.
  *
- * Why a proxy at all: the DSH host is a standalone `node` process,
+ * Why a proxy at all (an earlier round, still true): this machine's DSH host is a standalone `node` process,
  * and Node does NOT read the GNOME system proxy - it reads `http(s)_proxy` only, which the desktop
  * launcher never sets. So the browser reaches `platform.deepseek.com` through xray while the host
  * dials it raw, and the raw dial intermittently waits ~40s or dies `read ECONNRESET`. Proxy-routed
  * requests measured 164-545ms in the same window.
  *
- * Deliberately conservative: a proxy variable naming a
+ * Deliberately conservative, for the reason recorded as decision D13: a proxy variable naming a
  * port that cannot serve CONNECT makes every account API fail with `errorCode: 'network'` while the
  * link is fine. So:
  *  - only a listener that completes CONNECT *and* TLS through the tunnel is trusted - a 200 status
@@ -223,7 +223,7 @@ export const PROXY_CANDIDATE_PORTS = [10808, 10809, 7890, 7897, 8118, 8888, 1087
  * Can this port act as an HTTP CONNECT proxy for the origin that matters?
  *
  * A listening port is not enough: a SOCKS-only listener answers garbage to CONNECT, and handing
- * that to undici reproduces the same failure (every account call dies with `errorCode: network`).
+ * that to undici reproduces the D13 failure (every account call dies with `errorCode: network`).
  * So the probe sends a real CONNECT to the account host, without a token or credential, and
  * requires `200 Connection established` before the proxy is trusted.
  *
@@ -269,7 +269,7 @@ export function proxyCanConnect(
       // A 200 alone proves nothing: xray answers `200 Connection established` BEFORE it resolves
       // the name (measured: a CONNECT to a bogus host returns 200, then dies with ECONNRESET after
       // ~1s), and any local HTTP server would answer a status line too. Trusting either would put
-      // the host's HTTPS behind a non-proxy, which is the failure this probe exists to prevent. So finish the
+      // the host's HTTPS behind a non-proxy, which is the D13 failure again. So finish the
       // handshake the account calls actually need: TLS to the real origin through the tunnel.
       // Cost on this machine is 72ms when it works.
       tunnel = tlsConnect({ socket: plain, servername: probeHost })
@@ -295,7 +295,7 @@ export async function usableLocalProxy(
   listening: (host: string, port: number) => Promise<boolean> = portIsListening,
 ): Promise<SystemProxy | null> {
   // A panel proxy that is listening but cannot CONNECT (a SOCKS-only listener, say) is worse than
-  // useless here, so keep looking instead of handing it to undici and repeating that failure.
+  // useless here, so keep looking instead of handing it to undici and repeating the D13 failure.
   if (panel !== null && await canConnect(panel)) return panel
   for (const port of candidates) {
     const proxy = { host: '127.0.0.1', port }

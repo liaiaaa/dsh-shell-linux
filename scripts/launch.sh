@@ -53,4 +53,11 @@ done
 # Keep the two in sync: undici honours this flag for the inherited variables.
 if [[ -z "${https_proxy:-}${HTTPS_PROXY:-}" ]]; then unset NODE_USE_ENV_PROXY || true; fi
 
+# dsh-purge 之类的第三方插件按「surface」分派补丁目标。本脚本的 argv 里有
+# dsh-shell-linux 的路径，插件据此会把宿主误判成官方桌面客户端（desktop），
+# 于是去找 app.asar 里的 @deepseek-ai 而报「未定位到…」，点「应用」无效。
+# 这台机的宿主是 npm 全局安装的 web 宿主，显式声明即可（宿主本身不读这两个变量）。
+export DSH_SURFACE=web
+export DSH_BASE=/home/li/.local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai
+
 exec node_modules/electron/dist/electron . --no-sandbox "$@"

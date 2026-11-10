@@ -7,6 +7,7 @@ export const DESKTOP_IPC = {
   bootFailed: 'desktop:boot-failed',
   directoryPick: 'desktop:directory-pick',
   windowControl: 'desktop:window-control',
+  windowRaise: 'desktop:window-raise',
   windowState: 'desktop:window-state',
   menuPopup: 'desktop:menu-popup',
   shortcutsGet: 'desktop:shortcuts-get',

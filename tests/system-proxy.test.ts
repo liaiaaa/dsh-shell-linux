@@ -131,7 +131,7 @@ describe('proxyCanConnect against local listeners', () => {
   })
   // Discrimination matters: a 200 answer is not proof, because xray itself replies 200 before it
   // resolves the name, and any HTTP server answers a status line. Trusting either would put the
-  // host's HTTPS behind a non-proxy, which repeats the failure this probe exists to prevent.
+  // host's HTTPS behind a non-proxy, which repeats the D13 failure.
   it('rejects a listener that claims 200 but cannot carry TLS to the origin', async () => {
     const port = await serve('HTTP/1.1 200 Connection established' + String.fromCharCode(13, 10, 13, 10))
     const started = Date.now()

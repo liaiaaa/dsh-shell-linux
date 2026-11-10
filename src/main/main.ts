@@ -57,6 +57,31 @@ const profileName = profileNameFor(launchEnvironment)
 const openAboutAtStart = process.env.DSH_DESKTOP_ABOUT_AT_START === '1'
 const openDevTools = process.env.DSH_DESKTOP_DEVTOOLS !== undefined
 const REPOSITORY_URL = 'https://github.com/liaiaaa/dsh-shell-linux'
+/**
+ * Optional CDP endpoint for the real window's renderer.
+ *
+ * The shell never starts one on its own (the launcher does not pass a debugging port, so a
+ * stray `ps` match is provably not ours). But the real window's renderer idles hot — a
+ * 2026-11-07 measurement put it at 55.7% of one core with no shell-side timers to blame
+ * (no setInterval in preload/web-document/console-guard), and that number could not be
+ * attributed because headless Chrome is not the real window. Setting
+ * `DSH_DESKTOP_DEBUG_PORT=<port>` opens the documented Chromium switch for THIS launch so a
+ * probe can attach to the real window and profile it; unset, nothing changes.
+ */
+const debugPort = Number(process.env.DSH_DESKTOP_DEBUG_PORT ?? '')
+if (Number.isInteger(debugPort) && debugPort >= 1024 && debugPort <= 65535) {
+  app.commandLine.appendSwitch('remote-debugging-port', String(debugPort))
+  console.error('[dsh-shell-linux] remote debugging on 127.0.0.1:' + String(debugPort) + ' (DSH_DESKTOP_DEBUG_PORT)')
+}
+/**
+ * Wall-clock marks for the startup timing lines.
+ *
+ * The window shows a splash from process start until the host has booted, so "double-clicking the
+ * icon feels slow" is exactly the gap between these marks. They go to stderr (the journal) and
+ * nowhere else: no state, no UI.
+ */
+const startedAt = Date.now()
+const elapsedMs = (): number => Date.now() - startedAt
 // An `error` listener on both process streams, installed before anything can write to them. Without
 // it a detached stdout — screen off, lock, GNOME session restart — raises EPIPE as an uncaught
 // exception and Electron shows "A JavaScript error occurred in the main process", killing the shell
@@ -95,6 +120,8 @@ let aboutWindow: AboutWindowHandle | undefined
 let updateState: AboutUpdateState = { kind: 'idle', log: [] }
 let upgradeInFlight = false
 let upgradeAbort: AbortController | undefined
+/** True once the window has been pointed at the real app page (the splash is gone). */
+let appPageLoading = false
 
 if (safeMode) console.error(`[dsh-shell-linux] safe mode: profile ${profileDir}`)
 
@@ -383,7 +410,7 @@ function handleHostEvent(event: HostEvent): void {
  * `auto` (the default) uses it only when the GNOME panel names a manual LOOPBACK proxy that is
  * actually listening — which on this machine is exactly the path the browser already takes, while
  * a raw Node dial to platform.deepseek.com intermittently goes silent for ~40 seconds and blocks
- * `session/create` behind it (earlier development). `0`/`off` keeps the old raw path, `1`/`on`
+ * `session/create` behind it (an earlier round, A/E arms). `0`/`off` keeps the old raw path, `1`/`on`
  * forces the panel's proxy. `DSH_DESKTOP_NO_PROXY=1` always wins and stays direct.
  */
 const proxyMode = process.env.DSH_DESKTOP_SYSTEM_PROXY ?? 'auto'
@@ -392,7 +419,7 @@ const proxyMode = process.env.DSH_DESKTOP_SYSTEM_PROXY ?? 'auto'
  * Build the host child's environment, applying the route (see env.ts and tunnel.ts).
  *
  * The route is NOT decided here any more: this function only decides whether the child is pointed at
- * the shell's tunnel. That is the difference between earlier development and earlier development - a launch-time decision
+ * the shell's tunnel. That is the difference between an earlier round and an earlier round - a launch-time decision
  * committed the whole session to a single probe of a path that fails per connection, and a bounded
  * wait for a proxy that may never come blocked the window for it.
  */
@@ -504,7 +531,66 @@ async function startBackend(): Promise<void> {
   hostCookie = await authenticateWebHost(ready.url)
   hostUrl = ready.url
   injections = ready.injections ?? []
+  // The splash has been on screen for this long; the next mark is the app page itself.
+  console.error(`[dsh-shell-linux] startup: host ready +${String(elapsedMs())}ms`)
   if (openDevTools) console.log('[dsh-shell-linux] host ready:', logUrl(ready.url))
+}
+
+/**
+ * The splash the window shows while the host boots.
+ *
+ * The host takes seconds to come up (it loads the user's plugins and storages), and the window
+ * used to be created only after that point — the user saw nothing at all after double-clicking the
+ * icon. This page turns that gap into visible progress; it is replaced by the real app page as soon
+ * as the host is ready. The window is frameless, so the page carries the drag region itself.
+ */
+function splashDocument(offsetMs: number): string {
+  const icon = aboutIconDataUri()
+  return `<!doctype html><html><head><meta charset="utf-8"><title>DSH</title><style>
+:root { color-scheme: light dark }
+body { margin:0; height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center;
+       gap:14px; font:14px/1.6 system-ui, sans-serif; background:#1c1c1c; color:#eee;
+       -webkit-app-region: drag; user-select:none; overflow:hidden }
+@media (prefers-color-scheme: light) { body { background:#f7f7f8; color:#222 } .hint { color:#777 } }
+img { width:96px; height:96px; border-radius:20px }
+.title { font-size:20px; font-weight:600 }
+.spin { width:22px; height:22px; border:3px solid currentColor; border-right-color:transparent;
+        border-radius:50%; animation: spin .9s linear infinite; opacity:.7 }
+@keyframes spin { to { transform: rotate(360deg) } }
+.hint { font-size:12px; color:#999 }
+.stage { font-size:13px }
+.elapsed { font-variant-numeric: tabular-nums; font-size:12px; color:#999 }
+button { -webkit-app-region: no-drag; font:inherit; padding:6px 14px; border-radius:8px;
+         border:1px solid #555; background:transparent; color:inherit; cursor:pointer }
+</style></head><body>
+${icon === '' ? '' : `<img src="${icon}" alt="">`}
+<div class="title">DSH</div>
+<div class="spin"></div>
+<div class="stage" id="stage">正在启动 dsh（加载插件与会话）</div>
+<div class="elapsed" id="elapsed">已 0.0 秒</div>
+<div class="hint">插件与会话较多时需要 5–15 秒；卡住不动可按「取消」重试</div>
+<button onclick="window.close()">取消</button>
+<script>
+// The clock starts at process start, not at page load, so the number matches the journal marks.
+const offset = ${String(offsetMs)}
+const t0 = Date.now()
+const tick = () => {
+  const seconds = (offset + (Date.now() - t0)) / 1000
+  document.getElementById('elapsed').textContent = '已 ' + seconds.toFixed(1) + ' 秒'
+}
+tick()
+setInterval(tick, 100)
+window.__setStage = (text) => { document.getElementById('stage').textContent = text }
+</script>
+</body></html>`
+}
+
+/** Replace the splash's stage line without touching the clock. */
+function setSplashStage(text: string): void {
+  if (appPageLoading || mainWindow === undefined || mainWindow.isDestroyed()) return
+  void mainWindow.webContents
+    .executeJavaScript(`window.__setStage(${JSON.stringify(text)})`, true)
+    .catch(() => { /* the splash may already be navigating away */ })
 }
 
 function createWindow(): void {
@@ -528,13 +614,16 @@ function createWindow(): void {
   // sidebar and the menu is English-only boilerplate. Hide it, but keep the application menu
   // mounted so its accelerators (Ctrl+Q, Ctrl+Shift+I, ...) still work.
   mainWindow.setMenuBarVisibility(false)
-  mainWindow.once('ready-to-show', () => { mainWindow?.show() })
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show()
+    console.error(`[dsh-shell-linux] startup: window shown +${String(elapsedMs())}ms`)
+  })
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http://') || url.startsWith('https://')) { void shell.openExternal(url); return { action: 'deny' } }
     return { action: 'allow' }
   })
   if (openDevTools) mainWindow.webContents.openDevTools({ mode: 'detach' })
-  void mainWindow.loadURL(`${SCHEME}://app/`)
+  void mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashDocument(elapsedMs()))}`)
   // The page owns the document title; put the mode back whenever it changes so a safe-mode
   // window cannot be mistaken for a normal one.
   if (safeMode) {
@@ -556,6 +645,22 @@ function createWindow(): void {
   })
   mainWindow.on('close', () => { saveWindowState() })
   mainWindow.on('closed', () => { mainWindow = undefined })
+}
+
+/** Swap the splash for the real app page; called once the host has booted. */
+function loadAppPage(): void {
+  if (mainWindow === undefined || mainWindow.isDestroyed()) return
+  appPageLoading = true
+  mainWindow.webContents.once('did-finish-load', () => {
+    console.error(`[dsh-shell-linux] startup: app page loaded +${String(elapsedMs())}ms`)
+  })
+  void mainWindow.loadURL(`${SCHEME}://app/`)
+}
+
+/** Drop the splash after a failed boot; the error window is the one left standing. */
+function closeSplash(): void {
+  if (appPageLoading) return
+  if (mainWindow !== undefined && !mainWindow.isDestroyed()) mainWindow.close()
 }
 
 const gotLock = app.requestSingleInstanceLock()
@@ -714,6 +819,20 @@ if (!gotLock) {
       }
     })
 
+    // Raise the shell from its own page. A renderer's window.focus() never reaches the
+    // native window, so a desktop-notification click (dsh-notify-me) lands here instead.
+    // `app.focus({ steal: true })` is the Electron-documented Linux/Windows activation;
+    // `show()` covers a hidden window and `restore()` a minimized one, because a window
+    // that is not mapped cannot take focus on Wayland.
+    ipcMain.handle(DESKTOP_IPC.windowRaise, (event) => {
+      if (mainWindow === undefined || mainWindow.isDestroyed() || event.senderFrame !== mainWindow.webContents.mainFrame) return false
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+      app.focus({ steal: true })
+      return mainWindow.isFocused()
+    })
+
     // In-page caption menus. The page sends the viewport coordinates of the button that was
     // clicked; the popup itself is a native menu. `getZoomFactor` maps CSS pixels into the
     // window's device space (upstream does the same). The returned promise resolves only when
@@ -756,14 +875,19 @@ if (!gotLock) {
       callback({ requestHeaders: { ...headers, origin: target.origin, cookie: hostCookie, 'sec-fetch-site': 'same-origin' } })
     })
 
+    // The window comes up first with a splash; the host boots behind it. Creating the window only
+    // after the host was ready left the user staring at nothing for the whole boot (7s median here).
+    createWindow()
     try {
       await startBackend()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       reportFatal(message, hostProcess?.stderrTail() ?? '')
+      closeSplash()
       return
     }
-    createWindow()
+    setSplashStage('dsh 已就绪，正在加载界面…')
+    loadAppPage()
     // Probe hook: open the About window at startup so it can be verified over CDP without
     // synthesizing F1 into the page (which only the window manager can do reliably).
     if (openAboutAtStart) openAbout(false)

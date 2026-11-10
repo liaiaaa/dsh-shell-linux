@@ -165,7 +165,7 @@ describe('waitForProxyHello', () => {
     const hello = await waitForProxyHello(socket, { host: 'a.example', port: 443 }, 3_000)
     // `extra` is a Buffer, and that is the point: the bytes after a proxy's status line are a TLS
     // record. Decoded to a string and written back, 0xFF becomes two UTF-8 bytes and the request is
-    // corrupted - which is exactly how this tunnel once broke every account call while its own
+    // corrupted - which is exactly how an earlier round's tunnel broke every account call while its own
     // ASCII-only tests stayed green.
     expect(hello.ok).toBe(true)
     expect(Buffer.isBuffer(hello.extra)).toBe(true)
@@ -194,7 +194,7 @@ describe('waitForProxyHello', () => {
   })
 })
 
-describe('a failed proof must not short-circuit the retry', () => {
+describe('a failed proof must not short-circuit the retry (an earlier round regression)', () => {
   const target = { host: 'platform.deepseek.com', port: 443 }
 
   /**
@@ -316,7 +316,7 @@ describe('the tunnel, end to end over loopback', () => {
   })
 })
 
-describe('the route is re-decided per connection', () => {
+describe('the route is re-decided per connection, which is what an earlier round could not do', () => {
   /** A fake CONNECT proxy that answers 200 and then identifies itself down the tunnel. */
   const serveFakeProxy = (): Promise<{ port: number, server: Server, hits: () => number }> =>
     new Promise((resolve) => {
@@ -351,7 +351,7 @@ describe('the route is re-decided per connection', () => {
 
     offered = false
     // The payload rides in the SAME packet as the CONNECT headers, which is the case that was
-    // silently dropped by an earlier version: an origin that never saw it would never answer.
+    // silently dropped before an earlier round: an origin that never saw it would never answer.
     const second = await throughTunnel(tunnel.port, target, 'PING')
     expect(second.body).toContain('PONG-DIRECT')
     expect(origin.received()).toContain('PING')
@@ -369,7 +369,7 @@ describe('binary fidelity, which is the whole job of a TLS tunnel', () => {
   /**
    * Bytes must arrive byte-identical, in both directions.
    *
-   * This is a regression this tunnel shipped with once: it decoded the stream as latin1 text and
+   * This is the regression an earlier round shipped with: the tunnel decoded the stream as latin1 text and
    * wrote it back, and a write of a string encodes as UTF-8 - so a single 0xFF became 0xC3 0x9F and
    * every TLS record after the CONNECT was corrupted. The account calls failed in ~350ms while all
    * the ASCII-only tests stayed green, which is why the payload here deliberately contains 0xFF.
@@ -427,7 +427,7 @@ describe('serveTunnelConnection with injected paths', () => {
     const socket = {
       setEncoding(): void {},
       // The tunnel writes headers as (text, 'latin1') and body bytes as Buffers; a fake that only
-      // took strings would have hidden the encoding bug that actually happened.
+      // took strings would have hidden the encoding bug an earlier round actually hit.
       write(chunk: string | Buffer): void { written.push(typeof chunk === 'string' ? chunk : chunk.toString('latin1')) },
       end(): void {},
       destroy(): void {},

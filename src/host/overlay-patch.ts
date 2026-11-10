@@ -7,7 +7,7 @@
  * `runProfile` accepts overlay files applied AFTER the user's own patch layer, so the cap holds
  * regardless of the user's config; the plugin already degrades to "no account figures" on failure.
  *
- * HONEST SCOPE (do not re-claim more than this): the measured stall is NOT a timeout
+ * HONEST SCOPE (an earlier round, do not re-claim more than this): the measured stall is NOT a timeout
  * this cap can cut. The account request died at +42.9s / +47.5s WITH the 3s overlay applied,
  * because the wait is a connect that had already succeeded and was awaiting the response — not
  * interruptible from here. The stall is addressed by routing the host through the system proxy

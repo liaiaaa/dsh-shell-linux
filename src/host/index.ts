@@ -80,7 +80,7 @@ async function main(): Promise<void> {
 
   const { ctx } = await application
   const webServer = ctx.get('webServer') as { host: string; port: number }
-  const connection = ctx.get('connection') as { authenticatedUrl(baseUrl: string): string }
+  const connection = ctx.get('connection') as { authenticatedUrl(baseUrl: string): string; browserPeer?: unknown }
   const url = connection.authenticatedUrl(`http://${webServer.host}:${String(webServer.port)}`)
   if (process.env.DSH_HOST_DEBUG !== undefined) {
     const requestLog = url.replace(/\?.*$/, '')
@@ -109,7 +109,10 @@ async function main(): Promise<void> {
       console.error('[dsh-shell-linux] account watch failed:', error)
     })
   }
-  const injections = (ctx as { webServer: { collectIndexInjections(): unknown[] } }).webServer.collectIndexInjections()
+  // dsh 0.2.2 made the peer a required argument: subscribers such as dsh-api-remote-access
+  // read `peer.principal` while the table is being collected, so an argument-less call throws.
+  // Older installs ignore the extra argument, and `browserPeer` is simply absent there.
+  const injections = (ctx as { webServer: { collectIndexInjections(peer?: unknown): unknown[] } }).webServer.collectIndexInjections(connection.browserPeer)
   await send({ type: 'ready', url, injections })
 }
 

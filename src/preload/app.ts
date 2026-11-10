@@ -42,6 +42,10 @@ if (onAppOrigin) {
     toggleMaximize: () => ipcRenderer.send(DESKTOP_IPC.windowControl, 'maximize'),
     close: () => ipcRenderer.send(DESKTOP_IPC.windowControl, 'close'),
     isMaximized: () => ipcRenderer.sendSync(DESKTOP_IPC.windowControl, 'maximized-state') as boolean,
+    // Raise the window from the page. A DOM `window.focus()` never reaches the native
+    // window, so a desktop-notification click asks the main process instead. Resolves
+    // to whether the shell ended up focused.
+    raise: () => ipcRenderer.invoke(DESKTOP_IPC.windowRaise) as Promise<boolean>,
     // In-page caption menus: opens a native menu at the clicked button's viewport
     // coordinates; the promise settles when that menu closes.
     popupMenu: (name: string, x: number, y: number) => ipcRenderer.invoke(DESKTOP_IPC.menuPopup, name, x, y),

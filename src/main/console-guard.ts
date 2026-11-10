@@ -1,7 +1,7 @@
 /**
  * Keep a detached stdout/stderr from killing the shell.
  *
- * The failure this exists for (reproduced end to end): the shell pipes the host child's
+ * The failure this exists for (an earlier round, reproduced end to end): the shell pipes the host child's
  * stdout to its own `process.stdout`, and that stream is a pipe owned by whoever launched the app
  * (here: the GNOME session, which is why the journal shows these lines as `gnome-shell[…]: DING:`).
  * When the reader goes away — screen off / lock / session restart / a pager that quit — the next

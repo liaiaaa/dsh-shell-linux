@@ -11,7 +11,7 @@
  *
  * 2. Name resolution. The stall measured here is a glibc `getaddrinfo` that waits out its
  *    default five-second timeout while the same name answers in 1-14ms through c-ares at the
- *    same instant (probe/ui-polish/host-net-hook.cjs; see the ledger). Node resolves
+ *    same instant (an internal probe note; see the ledger). Node resolves
  *    `net.connect` targets on a libuv thread via getaddrinfo, and an AbortSignal cannot cancel
  *    that, which is why the account plugin's own 30s/3s timeout never cut the wait either.
  *    Following a proxy hid the problem by accident: a proxy address is a literal IP, so the
@@ -74,7 +74,7 @@ export function buildHostEnv(source: NodeJS.ProcessEnv, noProxy: boolean): NodeJ
 
 /**
  * The host child's proxy decision, as one pure function so the precedence is unit-testable
- * (the main process is not reachable by the CDP harness, so it cannot be asserted at runtime).
+ * (the main process is not reachable by the CDP harness — see the project instructions).
  *
  * Every branch also gains the resolver timeout: the branches that stay direct are exactly the
  * ones where name resolution sits on the critical path.
@@ -112,7 +112,7 @@ export function hostProxyEnvironment(options: {
  * What to do about the host's outbound route, as one pure decision.
  *
  * Extracted from the main process because the main process is not reachable by the CDP harness (see
- * runtime), and this is exactly the precedence that must be tested rather than eyeballed: an
+ * the project instructions), and this is exactly the precedence that must be tested rather than eyeballed: an
  * environment switch that silently stopped working would leave the user on the stalling path.
  *
  * @param mode - the `DSH_DESKTOP_SYSTEM_PROXY` value (mode word or explicit proxy URL).
@@ -122,7 +122,7 @@ export function hostProxyEnvironment(options: {
  *          `explicit` pinned when the user named one URL.
  *
  * An explicit value that cannot be parsed stays `direct` rather than becoming a search: the promise
- * made to users was that a named proxy is an order, and silently discovering some other
+ * recorded in an earlier round was that a named proxy is an order, and silently discovering some other
  * listener would route the account calls through something the user never named.
  */
 export type HostRoute = { kind: 'direct', reason: string } | { kind: 'tunnel', explicit: SystemProxy | null }

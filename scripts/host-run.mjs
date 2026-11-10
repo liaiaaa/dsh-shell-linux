@@ -1,10 +1,8 @@
 /** Debug runner: start the host child from plain node with an IPC channel and forward its events. */
 import { spawn } from 'node:child_process'
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 
-// The current user's own profile by default; pass a path to run against another one.
-const profileDir = resolve(process.argv[2] ?? join(homedir(), '.dsh', 'profiles', 'web'))
+const profileDir = resolve(process.argv[2] ?? '/home/li/.dsh/profiles/web')
 const child = spawn(process.execPath, ['--expose-internals', resolve('dist/node/host/index.js'), profileDir], {
   stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
   env: process.env,

@@ -51,7 +51,7 @@ describe('hostProxyEnvironment', () => {
   })
   // The tunnel listens on a random loopback port, so the address alone cannot say what it is, and a
   // log line that guessed "system proxy http://127.0.0.1:<random>" sent the reader hunting for an
-  // xray on a port that never had one. The caller now states it.
+  // xray on a port that never had one (an earlier round). The caller now states it.
   it('names the shell tunnel when the caller says that is what the address is', () => {
     const tunnelProxy = { host: '127.0.0.1', port: 43147 }
     const optsVia = { source: base, mode: 'auto', noProxy: false, apply: withSystemProxy, via: 'shell tunnel, per-connection route' }
@@ -103,3 +103,24 @@ function withoutTuning(env) {
   delete rest.UV_THREADPOOL_SIZE
   return rest
 }
+
+describe('DSH_DESKTOP_DEBUG_PORT parsing', () => {
+  // Mirrors the logic in main.ts without importing electron: same predicate, same bounds.
+  const valid = (raw: string | undefined): number | null => {
+    const port = Number(raw ?? '')
+    return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : null
+  }
+  it('accepts a normal port', () => {
+    expect(valid('9222')).toBe(9222)
+    expect(valid('49152')).toBe(49152)
+  })
+  it('rejects unset, empty, non-numeric, fractional, and out-of-range values', () => {
+    expect(valid(undefined)).toBeNull()
+    expect(valid('')).toBeNull()
+    expect(valid('true')).toBeNull()
+    expect(valid('0')).toBeNull()
+    expect(valid('1023')).toBeNull()
+    expect(valid('65536')).toBeNull()
+    expect(valid('9222.5')).toBeNull()
+  })
+})
